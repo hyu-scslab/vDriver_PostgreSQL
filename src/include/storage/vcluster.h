@@ -1,11 +1,9 @@
 /*-------------------------------------------------------------------------
  *
  * vcluster.h
- *	  Version cluster definitions.
+ *	  version cluster
  *
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
- * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/storage/vcluster.h
  *
@@ -14,5 +12,14 @@
 #ifndef VCLUSTER_H
 #define VCLUSTER_H
 
+/* Size of a segment of a version cluster */
+#define VCLUSTER_SEGSIZE    (16*1024*1024)
+
+typedef uint32_t VSegId;
+typedef uint32_t VSegOffset;
+typedef uint32_t VSegPageId;
+
+extern Size VClusterShmemSize(void);
+extern void VClusterShmemInit(void);
 
 #endif							/* VCLUSTER_H */

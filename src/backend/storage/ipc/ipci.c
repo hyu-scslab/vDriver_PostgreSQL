@@ -44,6 +44,9 @@
 #include "storage/procsignal.h"
 #include "storage/sinvaladt.h"
 #include "storage/spin.h"
+#ifndef HYU_LLT
+#include "storage/vcluster.h"
+#endif
 #include "utils/snapmgr.h"
 
 /* GUCs */
@@ -147,6 +150,9 @@ CreateSharedMemoryAndSemaphores(int port)
 		size = add_size(size, BTreeShmemSize());
 		size = add_size(size, SyncScanShmemSize());
 		size = add_size(size, AsyncShmemSize());
+#ifndef HYU_LLT
+		size = add_size(size, VClusterShmemSize());
+#endif
 #ifdef EXEC_BACKEND
 		size = add_size(size, ShmemBackendArraySize());
 #endif
@@ -263,6 +269,10 @@ CreateSharedMemoryAndSemaphores(int port)
 	BTreeShmemInit();
 	SyncScanShmemInit();
 	AsyncShmemInit();
+
+#ifndef HYU_LLT
+	VClusterShmemInit();
+#endif
 
 #ifdef EXEC_BACKEND
 
