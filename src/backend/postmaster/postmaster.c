@@ -572,7 +572,9 @@ PostmasterMain(int argc, char *argv[])
 	bool		listen_addr_saved = false;
 	int			i;
 	char	   *output_config_variable = NULL;
-
+#ifndef HYU_LLT
+	sleep(1);
+#endif
 	InitProcessGlobals();
 
 	PostmasterPid = MyProcPid;

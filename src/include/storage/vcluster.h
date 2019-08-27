@@ -12,6 +12,8 @@
 #ifndef VCLUSTER_H
 #define VCLUSTER_H
 
+#include "utils/dsa.h"
+
 /* Size of a segment of a version cluster */
 #define VCLUSTER_SEGSIZE    (16*1024*1024)
 

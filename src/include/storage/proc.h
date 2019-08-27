@@ -21,6 +21,7 @@
 #include "storage/lock.h"
 #include "storage/pg_sema.h"
 #include "storage/proclist_types.h"
+#include "utils/dsa.h"
 
 /*
  * Each backend advertises up to PGPROC_MAX_CACHED_SUBXIDS TransactionIds
@@ -272,6 +273,11 @@ typedef struct PROC_HDR
 	int			startupProcPid;
 	/* Buffer id of the buffer that Startup process waits for pin on, or -1 */
 	int			startupBufferPinWaitBufId;
+#ifndef HYU_LLT
+	/* Test code for using dsa */
+	dsa_handle	test_dsa_handle;
+	dsa_pointer test_dsa_pointer;
+#endif
 } PROC_HDR;
 
 extern PGDLLIMPORT PROC_HDR *ProcGlobal;

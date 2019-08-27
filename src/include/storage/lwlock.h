@@ -224,6 +224,10 @@ typedef enum BuiltinTrancheIds
 	LWTRANCHE_TBM,
 	LWTRANCHE_PARALLEL_APPEND,
 	LWTRANCHE_SXACT,
+#ifndef HYU_LLT
+	/* Test code for using dsa */
+	LWTRANCHE_VCLUSTER,
+#endif
 	LWTRANCHE_FIRST_USER_DEFINED
 }			BuiltinTrancheIds;
 

@@ -4106,7 +4106,7 @@ PostgresMain(int argc, char *argv[],
 	/*
 	 * Non-error queries loop here.
 	 */
-
+	
 	for (;;)
 	{
 		/*

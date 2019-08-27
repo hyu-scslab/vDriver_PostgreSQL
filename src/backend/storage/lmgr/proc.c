@@ -190,6 +190,11 @@ InitProcGlobal(void)
 	ProcGlobal->checkpointerLatch = NULL;
 	pg_atomic_init_u32(&ProcGlobal->procArrayGroupFirst, INVALID_PGPROCNO);
 	pg_atomic_init_u32(&ProcGlobal->clogGroupFirst, INVALID_PGPROCNO);
+#ifndef HYU_LLT
+	/* Test code for using dsa */
+	ProcGlobal->test_dsa_handle = 0;
+	ProcGlobal->test_dsa_pointer = 0;
+#endif
 
 	/*
 	 * Create and initialize all the PGPROC structures we'll need.  There are
