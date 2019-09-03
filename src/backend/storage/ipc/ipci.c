@@ -269,7 +269,6 @@ CreateSharedMemoryAndSemaphores(int port)
 	BTreeShmemInit();
 	SyncScanShmemInit();
 	AsyncShmemInit();
-
 #ifndef HYU_LLT
 	VClusterShmemInit();
 #endif
@@ -292,4 +291,8 @@ CreateSharedMemoryAndSemaphores(int port)
 	 */
 	if (shmem_startup_hook)
 		shmem_startup_hook();
+
+#ifndef HYU_LLT
+	VClusterDsaInit();
+#endif
 }

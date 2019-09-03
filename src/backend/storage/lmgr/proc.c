@@ -53,6 +53,9 @@
 #include "storage/procarray.h"
 #include "storage/procsignal.h"
 #include "storage/spin.h"
+#ifndef HYU_LLT
+#include "storage/vcluster.h"
+#endif
 #include "utils/timeout.h"
 #include "utils/timestamp.h"
 
@@ -191,9 +194,7 @@ InitProcGlobal(void)
 	pg_atomic_init_u32(&ProcGlobal->procArrayGroupFirst, INVALID_PGPROCNO);
 	pg_atomic_init_u32(&ProcGlobal->clogGroupFirst, INVALID_PGPROCNO);
 #ifndef HYU_LLT
-	/* Test code for using dsa */
-	ProcGlobal->test_dsa_handle = 0;
-	ProcGlobal->test_dsa_pointer = 0;
+	ProcGlobal->vcluster_dsa_handle = 0;
 #endif
 
 	/*

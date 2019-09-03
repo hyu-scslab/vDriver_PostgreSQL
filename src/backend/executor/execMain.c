@@ -64,9 +64,6 @@
 #include "utils/rls.h"
 #include "utils/ruleutils.h"
 #include "utils/snapmgr.h"
-#ifndef HYU_LLT
-#include "storage/vcluster.h"
-#endif
 
 /* Hooks for plugins to get control in ExecutorStart/Run/Finish/End */
 ExecutorStart_hook_type ExecutorStart_hook = NULL;
@@ -1615,36 +1612,7 @@ ExecutePlan(EState *estate,
 	TupleTableSlot *slot;
 	uint64		current_tuple_count;
 
-#ifndef HYU_LLT
-	/* Test code for using dsa */
-	dsa_area *dsa;
-	uint64_t *local_array;
-
-	if (ProcGlobal->test_dsa_handle == 0)
-	{
-		dsa = dsa_create(LWTRANCHE_VCLUSTER);
-		ProcGlobal->test_dsa_handle = dsa_get_handle(dsa);
-		ProcGlobal->test_dsa_pointer =
-				dsa_allocate_extended(dsa, 16, DSA_ALLOC_ZERO);
-		dsa_pin(dsa);
-	}
-	else
-	{
-		dsa = dsa_attach(ProcGlobal->test_dsa_handle);
-	}
-	
-	local_array = (uint64_t *)dsa_get_address(dsa, ProcGlobal->test_dsa_pointer);
-
-	if (local_array[0] == 0)
-	{
-		local_array[0] = 111;
-	}
-	else
-	{
-		Assert(local_array[0] != 0);
-	}
-
-	dsa_detach(dsa);
+#ifndef HYU_LLT /* USEFUL BREAKPOINT */
 #endif
 
 	/*

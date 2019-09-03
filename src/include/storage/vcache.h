@@ -17,8 +17,8 @@
 
 typedef struct VCacheTag
 {
-	VSegId		vseg_id;
-	VSegPageId	vseg_offset;
+	VSegmentId		vseg_id;
+	VSegmentPageId	vseg_offset;
 } VCacheTag;
 
 typedef struct VCacheDesc

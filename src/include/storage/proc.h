@@ -274,9 +274,7 @@ typedef struct PROC_HDR
 	/* Buffer id of the buffer that Startup process waits for pin on, or -1 */
 	int			startupBufferPinWaitBufId;
 #ifndef HYU_LLT
-	/* Test code for using dsa */
-	dsa_handle	test_dsa_handle;
-	dsa_pointer test_dsa_pointer;
+	dsa_handle	vcluster_dsa_handle;
 #endif
 } PROC_HDR;
 

@@ -62,6 +62,9 @@
 #include "storage/smgr.h"
 #include "storage/spin.h"
 #include "storage/standby.h"
+#ifndef HYU_LLT
+#include "storage/vcluster.h"
+#endif
 #include "utils/datum.h"
 #include "utils/inval.h"
 #include "utils/lsyscache.h"
@@ -2931,6 +2934,10 @@ heap_update(Relation relation, ItemPointer otid, HeapTuple newtup,
 				infomask2_old_tuple,
 				infomask_new_tuple,
 				infomask2_new_tuple;
+#ifndef HYU_LLT
+	char		*oldp;
+	int			oldlen;
+#endif
 
 	Assert(ItemPointerIsValid(otid));
 
@@ -3683,6 +3690,13 @@ l2:
 	if (newbuf != buffer)
 		MarkBufferDirty(newbuf);
 	MarkBufferDirty(buffer);
+
+#ifndef HYU_LLT
+	/* TODO: need to find the proper position for this code */
+	oldp = (char *) oldtup.t_data + oldtup.t_data->t_hoff;
+	oldlen = oldtup.t_len - oldtup.t_data->t_hoff;
+	VClusterAppendTuple(VCLUSTER_HOT, oldlen, oldp);
+#endif
 
 	/* XLOG stuff */
 	if (RelationNeedsWAL(relation))
