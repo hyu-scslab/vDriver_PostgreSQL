@@ -23,7 +23,7 @@ typedef enum {
 } VCLUSTER_TYPE;
 
 /* Size of a segment of a version cluster */
-#define VCLUSTER_SEGSIZE    (16*1024*1024)
+#define VCLUSTER_SEGSIZE    (16*1024)//*1024)
 
 /* Version tuple size */
 #define VCLUSTER_TUPLE_SIZE	(1024)	/* TODO: move this to configuration */
@@ -49,7 +49,9 @@ typedef struct {
 	VSegmentId			seg_id;
 	TransactionId		xmin;
 	TransactionId		xmax;
-	struct VSegmentDesc	*next;
+	
+	/* Need to be converted from dsa_pointer to (VSegmentDesc *) */
+	dsa_pointer			*next;
 
 	/* Segment offset where the next version tuple will be appended.
 	 * Backend process will use fetch-and-add instruction on this variable
@@ -63,7 +65,7 @@ typedef struct {
 } VSegmentDesc;
 
 typedef struct {
-	/* need to be converted from dsa_pointer to VSegmentDesc* */
+	/* need to be converted from dsa_pointer to (VSegmentDesc *) */
 	dsa_pointer			head[VCLUSTER_NUM];
 
 	/* next segment id for allocation */
@@ -72,6 +74,9 @@ typedef struct {
 
 extern VClusterDesc	*vclusters;
 extern dsa_area		*dsa_vcluster;
+
+#define VCLUSTER_MAX_SEGMENTS		10000
+extern int seg_fds[VCLUSTER_MAX_SEGMENTS];
 
 extern Size VClusterShmemSize(void);
 extern void VClusterShmemInit(void);

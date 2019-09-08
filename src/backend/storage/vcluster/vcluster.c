@@ -31,6 +31,12 @@ VClusterDesc	*vclusters;
 /* dsa_area of vcluster for this process */
 dsa_area		*dsa_vcluster;
 
+/*
+ * Temporal fd array (private) for each segment.
+ * TODO: replace it to hash table or something..
+ */
+int seg_fds[VCLUSTER_MAX_SEGMENTS];
+
 /* decls for local routines only used within this module */
 static dsa_pointer AllocNewSegmentInternal(dsa_area *dsa);
 static dsa_pointer AllocNewSegment(void);
@@ -66,9 +72,18 @@ VClusterShmemInit(void)
 	vclusters = (VClusterDesc *)
 		ShmemInitStruct("VCluster Descriptor",
 						sizeof(VClusterDesc), &foundDesc);
-	pg_atomic_init_u32(&vclusters->next_seg_id, 0);
+
+	/* We use segment id from 1, 0 is reserved for exceptional cases */
+	pg_atomic_init_u32(&vclusters->next_seg_id, 1);
 }
 
+/*
+ * VClusterDsaInit
+ *
+ * Initialize a dsa area for vcluster.
+ * This function should only be called after the initialization of
+ * the dynamic shared memory facilities.
+ */
 void
 VClusterDsaInit(void)
 {
@@ -89,29 +104,33 @@ VClusterDsaInit(void)
 		vclusters->head[i] = AllocNewSegmentInternal(dsa);
 	}
 
-	ereport(LOG, (errmsg("VClusterDsaInit, dsa: %p", dsa)));
 	dsa_detach(dsa);
 }
 
+/*
+ * VClusterDsaInit
+ *
+ * Attach to the dsa area for vcluster.
+ */
 void
 VClusterAttachDsa(void)
 {
-	if (dsa_vcluster != NULL) return;
-	//Assert(dsa_vcluster == NULL);
+	if (dsa_vcluster != NULL)
+		return;
 	
 	dsa_vcluster = dsa_attach(ProcGlobal->vcluster_dsa_handle);
-	ereport(LOG, (errmsg("VClusterAttachDsa, dsa: %p", dsa_vcluster)));
-
-	dsa_pin_mapping(dsa_vcluster);
 }
 
+/*
+ * VClusterDsaInit
+ *
+ * Detach from the dsa area for vcluster.
+ */
 void
 VClusterDetachDsa(void)
 {
-	if (dsa_vcluster == NULL) return;
-	//Assert(dsa_vcluster != NULL);
-	
-	ereport(LOG, (errmsg("VClusterDetachDsa, dsa: %p", dsa_vcluster)));
+	if (dsa_vcluster == NULL)
+		return;
 
 	dsa_detach(dsa_vcluster);
 	dsa_vcluster = NULL;
@@ -129,6 +148,14 @@ VClusterAppendTuple(VCLUSTER_TYPE cluster_type,
 {
 	VSegmentDesc 	*seg_desc;
 	int				alloc_seg_offset;
+	dsa_pointer		new_seg;
+	VSegmentDesc	*new_seg_desc;
+
+	/*
+	 * Alined size with power of 2. This is needed because
+	 * the current version only support fixed size tuple with power of 2
+	 */
+	Size			aligned_tuple_size;
 	
 	Assert(cluster_type == VCLUSTER_HOT ||
 		   cluster_type == VCLUSTER_COLD ||
@@ -136,6 +163,11 @@ VClusterAppendTuple(VCLUSTER_TYPE cluster_type,
 
 	Assert(dsa_vcluster != NULL);
 
+	aligned_tuple_size = 1 << my_log2(tuple_size);
+	
+	ereport(LOG, (errmsg(
+				"@@ VClusterAppendTuple, tuple_size: %d, aligned_tuple_size: %d",
+				tuple_size, aligned_tuple_size)));
 retry:
 	seg_desc = (VSegmentDesc *)dsa_get_address(
 				dsa_vcluster, vclusters->head[cluster_type]);
@@ -151,31 +183,36 @@ retry:
 		goto retry;
 	}
 
+	/* Allocate tuple space with aligned size with power of 2 */
 	alloc_seg_offset = pg_atomic_fetch_add_u32(
-			&seg_desc->seg_offset, tuple_size);
-	if (alloc_seg_offset + tuple_size <= VCLUSTER_SEGSIZE)
+			&seg_desc->seg_offset, aligned_tuple_size);
+	if (alloc_seg_offset + aligned_tuple_size <= VCLUSTER_SEGSIZE)
 	{
 		/* Success to allocate segment space */
-		
-		/* TODO: just append the tuple into the corresponding buffer page.. */
-		/* Also need to think about where to store fd.. */
-		char filename[128];
-		int fd;
 
-		sprintf(filename, "vsegment.%08d", seg_desc->seg_id);
-		fd = open(filename, O_RDWR);
-		pwrite(fd, tuple, tuple_size, alloc_seg_offset);
-		close(fd);
-
+		/*
+		 * NOTE: We are assuming that the tuple would not be overlapped
+		 * between two pages
+		 */
+		VCacheAppendTuple(seg_desc->seg_id,
+						  alloc_seg_offset,
+						  tuple_size,
+						  tuple);
 	}
 	else if (alloc_seg_offset <= VCLUSTER_SEGSIZE &&
-			 alloc_seg_offset + tuple_size > VCLUSTER_SEGSIZE)
+			 alloc_seg_offset + aligned_tuple_size > VCLUSTER_SEGSIZE)
 	{
 		/* Responsible for making a new segment for this cluster */
 		
 		/* TODO: If multiple process(foreground/background) prepare
 		 * a new segment concurrently, need to add some arbitration code */
-		vclusters->head[cluster_type] = AllocNewSegment();
+		new_seg = AllocNewSegment();
+
+		/* Segment descriptor chain remains new to old */
+		new_seg_desc =
+				(VSegmentDesc *)dsa_get_address(dsa_vcluster, new_seg);
+		new_seg_desc->next = vclusters->head[cluster_type];
+		vclusters->head[cluster_type] = new_seg;
 		pg_memory_barrier();
 		goto retry;
 	}
@@ -249,10 +286,13 @@ static void PrepareSegmentFile(VSegmentId seg_id)
 	char filename[128];
 
 	sprintf(filename, "vsegment.%08d", seg_id);
-	fd = open(filename, O_RDWR | O_CREAT | O_DIRECT, (mode_t)0600);
+	//fd = open(filename, O_RDWR | O_CREAT | O_DIRECT, (mode_t)0600);
+	fd = open(filename, O_RDWR | O_CREAT, (mode_t)0600);
+	/* TODO: need to confirm if we need to use O_DIRECT */
 
 	/* pre-allocate the segment file*/
 	fallocate(fd, 0, 0, VCLUSTER_SEGSIZE);
-	close(fd);
+
+	seg_fds[seg_id] = fd;
 }
 
