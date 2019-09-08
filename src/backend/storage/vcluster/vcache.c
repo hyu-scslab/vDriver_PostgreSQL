@@ -239,8 +239,10 @@ VCacheGetCacheRef(VSegmentId seg_id,
 		pg_atomic_fetch_add_u32(&cache->refcount, 1);
 		LWLockRelease(new_partition_lock);
 
+#if 0
 		ereport(LOG, (errmsg(
 				"@@ VCacheGetCacheRef, CACHE HIT, cache_id: %d", cache_id)));
+#endif
 
 		return cache_id;
 	}
@@ -298,7 +300,18 @@ find_cand:
 		 * We are going to use this, whether or not it need to be flushed,
 		 * so increase the refcount here.
 		 */
-		pg_atomic_fetch_add_u32(&cache->refcount, 1);
+		ret = pg_atomic_fetch_add_u32(&cache->refcount, 1);
+		if (ret > 0)
+		{
+			/* Race occured, and this transaction is a loser. */
+			ereport(LOG, (errmsg(
+			"@@ VCacheGetCacheRef, RACE 1, ret: %d", ret)));
+
+			pg_atomic_fetch_sub_u32(&cache->refcount, 1);
+			LWLockRelease(old_partition_lock);
+			goto find_cand;
+		}
+
 		Assert(pg_atomic_read_u32(&cache->refcount) == 1);
 
 		/*
@@ -308,8 +321,10 @@ find_cand:
 		VCacheHashDelete(&cache->tag, hashcode_vict);
 		LWLockRelease(old_partition_lock);
 
+#if 0
 		ereport(LOG, (errmsg(
 			"@@ VCacheGetCacheRef, EVICT PAGE, cache_id: %d", candidate_id)));
+#endif
 
 	}
 	else
@@ -317,7 +332,16 @@ find_cand:
 		/*
 		 * This cache entry is unused. Just increase the refcount and use it.
 		 */
-		pg_atomic_fetch_add_u32(&cache->refcount, 1);
+		ret = pg_atomic_fetch_add_u32(&cache->refcount, 1);
+		if (ret > 0)
+		{
+			/* Race occured, and this transaction is a loser. */
+			ereport(LOG, (errmsg(
+			"@@ VCacheGetCacheRef, RACE 1, ret: %d", ret)));
+
+			pg_atomic_fetch_sub_u32(&cache->refcount, 1);
+			goto find_cand;
+		}
 		Assert(pg_atomic_read_u32(&cache->refcount) == 1);
 	}
 
@@ -336,8 +360,10 @@ find_cand:
 		 */
 		cache->is_dirty = false;
 
+#if 0
 		ereport(LOG, (errmsg(
 			"@@ VCacheGetCacheRef, FLUSH PAGE, cache_id: %d", candidate_id)));
+#endif
 	}
 
 	/* Initialize the descriptor for a new cache */
@@ -346,10 +372,11 @@ find_cand:
 	{
 		/* Read target segment page into the cache */
 		VCacheReadSegmentPage(&cache->tag, candidate_id);
-		pg_atomic_init_u32(&cache->written_bytes, SEG_PAGESZ);
-		
+		pg_atomic_write_u32(&cache->written_bytes, SEG_PAGESZ);
+#if 0		
 		ereport(LOG, (errmsg(
 			"@@ VCacheGetCacheRef, READ PAGE, cache_id: %d", candidate_id)));
+#endif
 	}
 	else
 	{
@@ -358,7 +385,7 @@ find_cand:
 		 * so we pin this page by increasing one more refcount.
 		 * Last appender has responsibility for unpinning it.
 		 */
-		pg_atomic_init_u32(&cache->written_bytes, 0);
+		pg_atomic_write_u32(&cache->written_bytes, 0);
 		pg_atomic_fetch_add_u32(&cache->refcount, 1);
 	}
 	
@@ -369,10 +396,10 @@ find_cand:
 	Assert(ret == -1);
 	
 	LWLockRelease(new_partition_lock);
-
+#if 0
 	ereport(LOG, (errmsg(
 		"@@ VCacheGetCacheRef, RETURNS, cache_id: %d", candidate_id)));
-
+#endif
 	/* Return the index of cache entry, holding refcount 1 */
 	return candidate_id;
 }

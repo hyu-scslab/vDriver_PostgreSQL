@@ -165,9 +165,6 @@ VClusterAppendTuple(VCLUSTER_TYPE cluster_type,
 
 	aligned_tuple_size = 1 << my_log2(tuple_size);
 	
-	ereport(LOG, (errmsg(
-				"@@ VClusterAppendTuple, tuple_size: %d, aligned_tuple_size: %d",
-				tuple_size, aligned_tuple_size)));
 retry:
 	seg_desc = (VSegmentDesc *)dsa_get_address(
 				dsa_vcluster, vclusters->head[cluster_type]);
@@ -186,6 +183,10 @@ retry:
 	/* Allocate tuple space with aligned size with power of 2 */
 	alloc_seg_offset = pg_atomic_fetch_add_u32(
 			&seg_desc->seg_offset, aligned_tuple_size);
+	
+	ereport(LOG, (errmsg(
+				"@@ VClusterAppendTuple, alloc_seg_offset: %d", alloc_seg_offset)));
+
 	if (alloc_seg_offset + aligned_tuple_size <= VCLUSTER_SEGSIZE)
 	{
 		/* Success to allocate segment space */
