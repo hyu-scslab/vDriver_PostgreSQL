@@ -119,6 +119,7 @@ VClusterAttachDsa(void)
 		return;
 	
 	dsa_vcluster = dsa_attach(ProcGlobal->vcluster_dsa_handle);
+	dsa_pin_mapping(dsa_vcluster);
 }
 
 /*
@@ -183,9 +184,6 @@ retry:
 	/* Allocate tuple space with aligned size with power of 2 */
 	alloc_seg_offset = pg_atomic_fetch_add_u32(
 			&seg_desc->seg_offset, aligned_tuple_size);
-	
-	ereport(LOG, (errmsg(
-				"@@ VClusterAppendTuple, alloc_seg_offset: %d", alloc_seg_offset)));
 
 	if (alloc_seg_offset + aligned_tuple_size <= VCLUSTER_SEGSIZE)
 	{

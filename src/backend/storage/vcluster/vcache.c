@@ -220,6 +220,7 @@ VCacheGetCacheRef(VSegmentId seg_id,
 	uint32		hashcode_vict;
 	VCacheDesc *cache;
 	int			ret;
+	VCacheTag	victim_tag;
 
 	vcache_tag.seg_id = seg_id;
 	vcache_tag.page_id = SEG_OFFSET_TO_PAGE_ID(seg_offset);
@@ -239,19 +240,41 @@ VCacheGetCacheRef(VSegmentId seg_id,
 		pg_atomic_fetch_add_u32(&cache->refcount, 1);
 		LWLockRelease(new_partition_lock);
 
-#if 0
+#if 1
 		ereport(LOG, (errmsg(
-				"@@ VCacheGetCacheRef, CACHE HIT, cache_id: %d", cache_id)));
+				"@@ VCacheGetCacheRef, CACHE HIT, cache_id: %d, seg_id: %d, page_id: %d", cache_id, vcache_tag.seg_id, vcache_tag.page_id)));
 #endif
 
 		return cache_id;
 	}
+#if 1
+		ereport(LOG, (errmsg(
+				"@@ VCacheGetCacheRef, CACHE MISS, seg_id: %d, page_id: %d", vcache_tag.seg_id, vcache_tag.page_id)));
+#endif
 
+
+	/* TODO: need to pre-allocate caches for appending pages */
+	
 	/*
-	 * Release the partition lock now, and then re-aquire it later
-	 * when an available page is ready
+	 * Need to acquire exclusive lock for inserting a new vcache_hash entry
 	 */
 	LWLockRelease(new_partition_lock);
+	LWLockAcquire(new_partition_lock, LW_EXCLUSIVE);
+
+	/*
+	 * If another transaction already inserted the vcache hash entry,
+	 * just use it
+	 */
+	cache_id = VCacheHashLookup(&vcache_tag, hashcode);
+	if (cache_id >= 0)
+	{
+		cache = GetVCacheDescriptor(cache_id);
+
+		pg_atomic_fetch_add_u32(&cache->refcount, 1);
+		LWLockRelease(new_partition_lock);
+
+		return cache_id;
+	}
 
 find_cand:
 	/* Pick up a candidate cache entry for a new allocation */
@@ -263,13 +286,14 @@ find_cand:
 		/* Someone is accessing this entry, find another candidate */
 		goto find_cand;
 	}
+	victim_tag = cache->tag;
 
 	/*
 	 * It seems that this entry is unused now. But we need to check it
 	 * again after holding the partition lock, because another transaction
 	 * might trying to access and increase this refcount just right now.
 	 */
-	if (cache->tag.seg_id > 0)
+	if (victim_tag.seg_id > 0)
 	{
 		/*
 		 * This entry is using now so that we need to remove vcache_hash
@@ -277,44 +301,56 @@ find_cand:
 		 */
 		hashcode_vict = VCacheHashCode(&cache->tag);
 		old_partition_lock = VCacheMappingPartitionLock(hashcode_vict);
+		if (LWLockHeldByMe(old_partition_lock))
+		{
+			/* Partition lock collision occured by myself */
+			/*
+			 * TODO: Actually, the transaction can use this entry as a victim
+			 * by marking lock collision instead of acquiring nested lock.
+			 * It will perform better, but now I just simply find another.
+			 */
+			goto find_cand;
+		}
+
 		if (!LWLockConditionalAcquire(old_partition_lock, LW_EXCLUSIVE))
 		{
 			/* Partition lock is already held by someone. */
 			goto find_cand;
 		}
 
-		/*
-		 * Partition lock is acquired. We need to re-check the refcount
-		 * again, because another concurrent transaction might increased
-		 * it just before.
-		 */
-		if (pg_atomic_read_u32(&cache->refcount) > 0)
+		/* Try to hold refcount for the eviction */
+		ret = pg_atomic_fetch_add_u32(&cache->refcount, 1);
+		if (ret > 0)
 		{
-			/* Race occured */
+			/*
+			 * Race occured. Another read transaction might get this page,
+			 * or possibly another evicting tranasaction might get this page
+			 * if round robin cycle is too short.
+			 */
+			pg_atomic_fetch_sub_u32(&cache->refcount, 1);
+			goto find_cand;
+		}
+
+		if (cache->tag.seg_id != victim_tag.seg_id ||
+			cache->tag.page_id != victim_tag.page_id)
+		{
+			/*
+			 * This exception might very rare, but the possible scenario is,
+			 * 1. txn A processed just before holding the old_partition_lock
+			 * 2. round robin cycle is too short, so txn B acquired the
+			 *    old_partition_lock, and evicted this page, and mapped it
+			 *    to another vcache_hash entry
+			 * 3. Txn B unreffed this page after using it so that refcount
+			 *    becomes 0, but seg_id and(or) page_id of this entry have
+			 *    changed
+			 * In this case, just find another victim for simplicity now.
+			 */
 			LWLockRelease(old_partition_lock);
 			goto find_cand;
 		}
 
 		/*
 		 * Now we can safely evict this entry.
-		 * We are going to use this, whether or not it need to be flushed,
-		 * so increase the refcount here.
-		 */
-		ret = pg_atomic_fetch_add_u32(&cache->refcount, 1);
-		if (ret > 0)
-		{
-			/* Race occured, and this transaction is a loser. */
-			ereport(LOG, (errmsg(
-			"@@ VCacheGetCacheRef, RACE 1, ret: %d", ret)));
-
-			pg_atomic_fetch_sub_u32(&cache->refcount, 1);
-			LWLockRelease(old_partition_lock);
-			goto find_cand;
-		}
-
-		Assert(pg_atomic_read_u32(&cache->refcount) == 1);
-
-		/*
 		 * Remove corresponding hash entry for it so that we can release
 		 * the partition lock.
 		 */
@@ -325,7 +361,6 @@ find_cand:
 		ereport(LOG, (errmsg(
 			"@@ VCacheGetCacheRef, EVICT PAGE, cache_id: %d", candidate_id)));
 #endif
-
 	}
 	else
 	{
@@ -335,14 +370,13 @@ find_cand:
 		ret = pg_atomic_fetch_add_u32(&cache->refcount, 1);
 		if (ret > 0)
 		{
-			/* Race occured, and this transaction is a loser. */
-			ereport(LOG, (errmsg(
-			"@@ VCacheGetCacheRef, RACE 1, ret: %d", ret)));
-
+			/*
+			 * Race occured. Possibly another evicting tranasaction might get
+			 * this page if round robin cycle is too short.
+			 */
 			pg_atomic_fetch_sub_u32(&cache->refcount, 1);
 			goto find_cand;
 		}
-		Assert(pg_atomic_read_u32(&cache->refcount) == 1);
 	}
 
 	/*
@@ -390,8 +424,6 @@ find_cand:
 	}
 	
 	/* Next, insert new vcache hash entry for it */
-	LWLockAcquire(new_partition_lock, LW_EXCLUSIVE);
-	
 	ret = VCacheHashInsert(&vcache_tag, hashcode, candidate_id);
 	Assert(ret == -1);
 	

@@ -45,3 +45,6 @@ lib*.pc
 
 # Cscope
 cscope.*
+
+# swp
+.*.swp
