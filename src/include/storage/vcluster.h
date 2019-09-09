@@ -70,6 +70,9 @@ typedef struct {
 
 	/* next segment id for allocation */
 	pg_atomic_uint32	next_seg_id;
+
+	/* reserved segment id for each cluster */
+	VSegmentId			reserved_seg_id[VCLUSTER_NUM];
 } VClusterDesc;
 
 extern VClusterDesc	*vclusters;

@@ -24,9 +24,15 @@ VCacheDescPadded	*VCacheDescriptors;
 char				*VCacheBlocks;
 VCacheMeta		 	*VCache;
 
-#define SEG_PAGESZ		(BLCKSZ)
+#define SEG_PAGESZ					(BLCKSZ)
 #define SEG_OFFSET_TO_PAGE_ID(off)  ((off) / (SEG_PAGESZ))
-#define PAGE_RESERVE	64
+
+/*
+ * Number of reserved pages should be less than the number of pages
+ * in a segment.
+ */
+#define NUM_PAGES_IN_SEG	((VCLUSTER_SEGSIZE) / (SEG_PAGESZ))
+#define PAGE_RESERVE		((NUM_PAGES_IN_SEG) / 32)
 
 /* decls for local routines only used within this module */
 static int VCacheGetCacheRef(VSegmentId seg_id,
@@ -120,6 +126,7 @@ VCacheInit(void)
  */
 void
 VCacheAppendTuple(VSegmentId seg_id,
+				  VSegmentId reserved_seg_id,
 				  VSegmentOffset seg_offset,
 				  Size tuple_size,
 				  const void *tuple)
@@ -128,8 +135,7 @@ VCacheAppendTuple(VSegmentId seg_id,
 	VCacheDesc	   *cache;
 	int				page_offset;
 	int				written;
-	VSegmentId		reserve_seg_id;
-	VSegmentOffset	reserve_seg_offset;
+	VSegmentOffset	reserved_seg_offset;
 
 	/*
 	 * Alined size with power of 2. This is needed because
@@ -174,16 +180,27 @@ VCacheAppendTuple(VSegmentId seg_id,
 	 * on exclusive partition hash lock, we proactively reserve and pin
 	 * some segment pages that are going to be used soon.
 	 */
+#if 1
 	if (written == SEG_PAGESZ)
 	{
-		reserve_seg_offset = seg_offset + PAGE_RESERVE * SEG_PAGESZ;
-		reserve_seg_id = seg_id + reserve_seg_offset / VCLUSTER_SEGSIZE;
-		reserve_seg_offset %= VCLUSTER_SEGSIZE;
-
-		cache_id = VCacheGetCacheRef(reserve_seg_id, reserve_seg_offset, true);
+		reserved_seg_offset = seg_offset + PAGE_RESERVE * SEG_PAGESZ;
+		if (reserved_seg_offset < VCLUSTER_SEGSIZE)
+		{
+			/* Reserve a cache entry for the page on same segment */
+			cache_id = VCacheGetCacheRef(
+					seg_id, reserved_seg_offset, true);
+		}
+		else
+		{
+			/* Reserve a cache entry for the page on next segment */
+			reserved_seg_offset = seg_offset % VCLUSTER_SEGSIZE;
+			cache_id = VCacheGetCacheRef(
+					reserved_seg_id, reserved_seg_offset, true);
+		}
 		cache = GetVCacheDescriptor(cache_id);
 		VCacheUnref(cache);
 	}
+#endif
 }
 
 /*

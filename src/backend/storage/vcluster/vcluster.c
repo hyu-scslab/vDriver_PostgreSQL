@@ -38,8 +38,8 @@ dsa_area		*dsa_vcluster;
 int seg_fds[VCLUSTER_MAX_SEGMENTS];
 
 /* decls for local routines only used within this module */
-static dsa_pointer AllocNewSegmentInternal(dsa_area *dsa);
-static dsa_pointer AllocNewSegment(void);
+static dsa_pointer AllocNewSegmentInternal(dsa_area *dsa, VCLUSTER_TYPE type);
+static dsa_pointer AllocNewSegment(VCLUSTER_TYPE type);
 static void PrepareSegmentFile(VSegmentId seg_id);
 
 /*
@@ -74,7 +74,11 @@ VClusterShmemInit(void)
 						sizeof(VClusterDesc), &foundDesc);
 
 	/* We use segment id from 1, 0 is reserved for exceptional cases */
-	pg_atomic_init_u32(&vclusters->next_seg_id, 1);
+	for (int i = 0; i < VCLUSTER_NUM; i++)
+	{
+		vclusters->reserved_seg_id[i] = i + 1;
+	}
+	pg_atomic_init_u32(&vclusters->next_seg_id, VCLUSTER_NUM + 1);
 }
 
 /*
@@ -101,7 +105,7 @@ VClusterDsaInit(void)
 	 */
 	for (int i = 0; i < VCLUSTER_NUM; i++)
 	{
-		vclusters->head[i] = AllocNewSegmentInternal(dsa);
+		vclusters->head[i] = AllocNewSegmentInternal(dsa, i);
 	}
 
 	dsa_detach(dsa);
@@ -151,6 +155,7 @@ VClusterAppendTuple(VCLUSTER_TYPE cluster_type,
 	int				alloc_seg_offset;
 	dsa_pointer		new_seg;
 	VSegmentDesc	*new_seg_desc;
+	VSegmentId		reserved_seg_id;
 
 	/*
 	 * Alined size with power of 2. This is needed because
@@ -167,8 +172,16 @@ VClusterAppendTuple(VCLUSTER_TYPE cluster_type,
 	aligned_tuple_size = 1 << my_log2(tuple_size);
 
 retry:
+	/*
+	 * The order of reading the segment id and the reserved segment id
+	 * is important for making happen-before relation.
+	 * If we read the reserved segment id first, then the segment id and
+	 * the reserved segment id could be same.
+	 */
 	seg_desc = (VSegmentDesc *)dsa_get_address(
 				dsa_vcluster, vclusters->head[cluster_type]);
+	pg_memory_barrier();
+	reserved_seg_id = vclusters->reserved_seg_id[cluster_type];
 	
 	/* Pre-check whether the current segment is full */
 	if (pg_atomic_read_u32(&seg_desc->seg_offset) > VCLUSTER_SEGSIZE)
@@ -194,6 +207,7 @@ retry:
 		 * between two pages
 		 */
 		VCacheAppendTuple(seg_desc->seg_id,
+						  reserved_seg_id,
 						  alloc_seg_offset,
 						  tuple_size,
 						  tuple);
@@ -205,7 +219,7 @@ retry:
 		
 		/* TODO: If multiple process(foreground/background) prepare
 		 * a new segment concurrently, need to add some arbitration code */
-		new_seg = AllocNewSegment();
+		new_seg = AllocNewSegment(cluster_type);
 
 		/* Segment descriptor chain remains new to old */
 		new_seg_desc =
@@ -233,18 +247,21 @@ retry:
  * Postmaster exceptionally call this function directly,
  * using its own dsa_area.
  */
-static dsa_pointer AllocNewSegmentInternal(dsa_area *dsa)
+static dsa_pointer
+AllocNewSegmentInternal(dsa_area *dsa, VCLUSTER_TYPE cluster_type)
 {
-	dsa_pointer ret;
-	VSegmentDesc *seg_desc;
-	int new_seg_id;
+	dsa_pointer		ret;
+	VSegmentDesc   *seg_desc;
+	VSegmentId		new_seg_id;
 
 	/* Allocate a new segment descriptor in shared memory */
 	ret = dsa_allocate_extended(
 			dsa, sizeof(VSegmentDesc), DSA_ALLOC_ZERO);
 
 	/* Get a new segment id */
-	new_seg_id = pg_atomic_fetch_add_u32(&vclusters->next_seg_id, 1);
+	new_seg_id = vclusters->reserved_seg_id[cluster_type];
+	vclusters->reserved_seg_id[cluster_type] =
+			pg_atomic_fetch_add_u32(&vclusters->next_seg_id, 1);
 
 	/* Initialize the segment descriptor */
 	seg_desc = (VSegmentDesc *)dsa_get_address(dsa, ret);
@@ -267,11 +284,12 @@ static dsa_pointer AllocNewSegmentInternal(dsa_area *dsa)
  * Make a new segment file and its index
  * Returns the dsa_pointer of the new segment descriptor
  */
-static dsa_pointer AllocNewSegment(void)
+static dsa_pointer
+AllocNewSegment(VCLUSTER_TYPE cluster_type)
 {
 	Assert(dsa_vcluster != NULL);
 
-	return AllocNewSegmentInternal(dsa_vcluster);
+	return AllocNewSegmentInternal(dsa_vcluster, cluster_type);
 }
 
 /*

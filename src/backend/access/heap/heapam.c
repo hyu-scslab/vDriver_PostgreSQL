@@ -3695,7 +3695,15 @@ l2:
 	/* TODO: need to find the proper position for this code */
 	oldp = (char *) oldtup.t_data + oldtup.t_data->t_hoff;
 	oldlen = oldtup.t_len - oldtup.t_data->t_hoff;
-	VClusterAppendTuple(VCLUSTER_HOT, oldlen, oldp);
+	{
+		int r = random() % 100;
+		if (r < 80)
+			VClusterAppendTuple(VCLUSTER_HOT, oldlen, oldp);
+		else if (r < 90)
+			VClusterAppendTuple(VCLUSTER_COLD, oldlen, oldp);
+		else
+			VClusterAppendTuple(VCLUSTER_LLT, oldlen, oldp);
+	}
 #endif
 
 	/* XLOG stuff */

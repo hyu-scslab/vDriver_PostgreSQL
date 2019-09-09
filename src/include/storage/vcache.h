@@ -75,6 +75,7 @@ extern Size VCacheShmemSize(void);
 extern void VCacheInit(void);
 
 extern void VCacheAppendTuple(VSegmentId seg_id,
+							  VSegmentId reserved_seg_id,
 							  VSegmentOffset seg_offset,
 				  			  Size tuple_size,
 				  			  const void *tuple);
