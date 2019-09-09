@@ -26,7 +26,7 @@ typedef enum {
 #define VCLUSTER_SEGSIZE    (16*1024*1024)
 
 /* Version tuple size */
-#define VCLUSTER_TUPLE_SIZE	(1024)	/* TODO: move this to configuration */
+#define VCLUSTER_TUPLE_SIZE	(128)	/* TODO: move this to configuration */
 
 /* Number of tuple entry in a vsegment */
 #define VCLUSTER_SEG_NUM_ENTRY	((VCLUSTER_SEGSIZE) / (VCLUSTER_TUPLE_SIZE))

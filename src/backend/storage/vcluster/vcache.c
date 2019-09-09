@@ -219,7 +219,7 @@ VCacheReadTuple(VSegmentId seg_id,
 /*
  * VCacheGetCacheRef
  *
- * Increase refcount of the requested segment page, and returns the cache_id for it
+ * Increase refcount of the requested segment page, and returns the cache_id.
  * If the page is not cached, read it from the segment file. If cache is full,
  * evict one page following the eviction policy (currently round-robin..)
  * Caller must decrease refcount after using it. If caller makes the page full
@@ -259,21 +259,9 @@ VCacheGetCacheRef(VSegmentId seg_id,
 		pg_atomic_fetch_add_u32(&cache->refcount, 1);
 		LWLockRelease(new_partition_lock);
 
-#if 0
-		ereport(LOG, (errmsg(
-				"@@ VCacheGetCacheRef, CACHE HIT, cache_id: %d, seg_id: %d, page_id: %d", cache_id, vcache_tag.seg_id, vcache_tag.page_id)));
-#endif
-
 		return cache_id;
 	}
-#if 0
-		ereport(LOG, (errmsg(
-				"@@ VCacheGetCacheRef, CACHE MISS, seg_id: %d, page_id: %d", vcache_tag.seg_id, vcache_tag.page_id)));
-#endif
 
-
-	/* TODO: need to pre-allocate caches for appending pages */
-	
 	/*
 	 * Need to acquire exclusive lock for inserting a new vcache_hash entry
 	 */
@@ -347,6 +335,7 @@ find_cand:
 			 * if round robin cycle is too short.
 			 */
 			pg_atomic_fetch_sub_u32(&cache->refcount, 1);
+			LWLockRelease(old_partition_lock);
 			goto find_cand;
 		}
 
@@ -355,7 +344,8 @@ find_cand:
 		{
 			/*
 			 * This exception might very rare, but the possible scenario is,
-			 * 1. txn A processed just before holding the old_partition_lock
+			 * 1. txn A processed up to just before holding the
+			 *    old_partition_lock
 			 * 2. round robin cycle is too short, so txn B acquired the
 			 *    old_partition_lock, and evicted this page, and mapped it
 			 *    to another vcache_hash entry
@@ -375,11 +365,6 @@ find_cand:
 		 */
 		VCacheHashDelete(&cache->tag, hashcode_vict);
 		LWLockRelease(old_partition_lock);
-
-#if 0
-		ereport(LOG, (errmsg(
-			"@@ VCacheGetCacheRef, EVICT PAGE, cache_id: %d", candidate_id)));
-#endif
 	}
 	else
 	{
@@ -412,11 +397,6 @@ find_cand:
 		 * with a new tuple as a new segment page.
 		 */
 		cache->is_dirty = false;
-
-#if 0
-		ereport(LOG, (errmsg(
-			"@@ VCacheGetCacheRef, FLUSH PAGE, cache_id: %d", candidate_id)));
-#endif
 	}
 
 	/* Initialize the descriptor for a new cache */
@@ -426,10 +406,6 @@ find_cand:
 		/* Read target segment page into the cache */
 		VCacheReadSegmentPage(&cache->tag, candidate_id);
 		pg_atomic_write_u32(&cache->written_bytes, SEG_PAGESZ);
-#if 0		
-		ereport(LOG, (errmsg(
-			"@@ VCacheGetCacheRef, READ PAGE, cache_id: %d", candidate_id)));
-#endif
 	}
 	else
 	{
@@ -447,10 +423,7 @@ find_cand:
 	Assert(ret == -1);
 	
 	LWLockRelease(new_partition_lock);
-#if 0
-	ereport(LOG, (errmsg(
-		"@@ VCacheGetCacheRef, RETURNS, cache_id: %d", candidate_id)));
-#endif
+	
 	/* Return the index of cache entry, holding refcount 1 */
 	return candidate_id;
 }
@@ -484,11 +457,7 @@ VCacheReadSegmentPage(const VCacheTag *tag, int cache_id)
 	ret = pread(seg_fds[tag->seg_id],
 				&VCacheBlocks[cache_id * SEG_PAGESZ],
 				SEG_PAGESZ, tag->page_id * SEG_PAGESZ);
-#if 0
-	ereport(LOG, (errmsg(
-			"@@ VCacheReadSegmentPage, seg_id: %d, page_id: %d",
-				tag->seg_id, tag->page_id)));
-#endif
+	
 	Assert(ret == SEG_PAGESZ);
 }
 
@@ -510,11 +479,6 @@ VCacheWriteSegmentPage(const VCacheTag *tag, int cache_id)
 				 &VCacheBlocks[cache_id * SEG_PAGESZ],
 				 SEG_PAGESZ, tag->page_id * SEG_PAGESZ);
 
-#if 0
-	ereport(LOG, (errmsg(
-			"@@ VCacheWriteSegmentPage, seg_id: %d, page_id: %d",
-				tag->seg_id, tag->page_id)));
-#endif
 	Assert(ret == SEG_PAGESZ);
 }
 
