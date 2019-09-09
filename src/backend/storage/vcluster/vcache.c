@@ -26,6 +26,7 @@ VCacheMeta		 	*VCache;
 
 #define SEG_PAGESZ		(BLCKSZ)
 #define SEG_OFFSET_TO_PAGE_ID(off)  ((off) / (SEG_PAGESZ))
+#define PAGE_RESERVE	64
 
 /* decls for local routines only used within this module */
 static int VCacheGetCacheRef(VSegmentId seg_id,
@@ -123,10 +124,12 @@ VCacheAppendTuple(VSegmentId seg_id,
 				  Size tuple_size,
 				  const void *tuple)
 {
-	int			cache_id;			/* vcache index of target segment page */
-	VCacheDesc *cache;
-	int			page_offset;
-	int			written;
+	int				cache_id;		/* vcache index of target segment page */
+	VCacheDesc	   *cache;
+	int				page_offset;
+	int				written;
+	VSegmentId		reserve_seg_id;
+	VSegmentOffset	reserve_seg_offset;
 
 	/*
 	 * Alined size with power of 2. This is needed because
@@ -165,6 +168,22 @@ VCacheAppendTuple(VSegmentId seg_id,
 
 	/* Whether or not the page has been full, we should unref the page */
 	VCacheUnref(cache);
+
+	/*
+	 * OPTIMIZATION: To relax the contention between appending transactions
+	 * on exclusive partition hash lock, we proactively reserve and pin
+	 * some segment pages that are going to be used soon.
+	 */
+	if (written == SEG_PAGESZ)
+	{
+		reserve_seg_offset = seg_offset + PAGE_RESERVE * SEG_PAGESZ;
+		reserve_seg_id = seg_id + reserve_seg_offset / VCLUSTER_SEGSIZE;
+		reserve_seg_offset %= VCLUSTER_SEGSIZE;
+
+		cache_id = VCacheGetCacheRef(reserve_seg_id, reserve_seg_offset, true);
+		cache = GetVCacheDescriptor(cache_id);
+		VCacheUnref(cache);
+	}
 }
 
 /*
@@ -240,14 +259,14 @@ VCacheGetCacheRef(VSegmentId seg_id,
 		pg_atomic_fetch_add_u32(&cache->refcount, 1);
 		LWLockRelease(new_partition_lock);
 
-#if 1
+#if 0
 		ereport(LOG, (errmsg(
 				"@@ VCacheGetCacheRef, CACHE HIT, cache_id: %d, seg_id: %d, page_id: %d", cache_id, vcache_tag.seg_id, vcache_tag.page_id)));
 #endif
 
 		return cache_id;
 	}
-#if 1
+#if 0
 		ereport(LOG, (errmsg(
 				"@@ VCacheGetCacheRef, CACHE MISS, seg_id: %d, page_id: %d", vcache_tag.seg_id, vcache_tag.page_id)));
 #endif
@@ -465,11 +484,11 @@ VCacheReadSegmentPage(const VCacheTag *tag, int cache_id)
 	ret = pread(seg_fds[tag->seg_id],
 				&VCacheBlocks[cache_id * SEG_PAGESZ],
 				SEG_PAGESZ, tag->page_id * SEG_PAGESZ);
-
+#if 0
 	ereport(LOG, (errmsg(
 			"@@ VCacheReadSegmentPage, seg_id: %d, page_id: %d",
 				tag->seg_id, tag->page_id)));
-
+#endif
 	Assert(ret == SEG_PAGESZ);
 }
 
@@ -490,11 +509,12 @@ VCacheWriteSegmentPage(const VCacheTag *tag, int cache_id)
 	ret = pwrite(seg_fds[tag->seg_id],
 				 &VCacheBlocks[cache_id * SEG_PAGESZ],
 				 SEG_PAGESZ, tag->page_id * SEG_PAGESZ);
-	
+
+#if 0
 	ereport(LOG, (errmsg(
 			"@@ VCacheWriteSegmentPage, seg_id: %d, page_id: %d",
 				tag->seg_id, tag->page_id)));
-
+#endif
 	Assert(ret == SEG_PAGESZ);
 }
 

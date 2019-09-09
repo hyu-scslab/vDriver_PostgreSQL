@@ -165,7 +165,7 @@ VClusterAppendTuple(VCLUSTER_TYPE cluster_type,
 	Assert(dsa_vcluster != NULL);
 
 	aligned_tuple_size = 1 << my_log2(tuple_size);
-	
+
 retry:
 	seg_desc = (VSegmentDesc *)dsa_get_address(
 				dsa_vcluster, vclusters->head[cluster_type]);
