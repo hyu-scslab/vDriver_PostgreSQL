@@ -180,7 +180,6 @@ VCacheAppendTuple(VSegmentId seg_id,
 	 * on exclusive partition hash lock, we proactively reserve and pin
 	 * some segment pages that are going to be used soon.
 	 */
-#if 1
 	if (written == SEG_PAGESZ)
 	{
 		reserved_seg_offset = seg_offset + PAGE_RESERVE * SEG_PAGESZ;
@@ -200,7 +199,6 @@ VCacheAppendTuple(VSegmentId seg_id,
 		cache = GetVCacheDescriptor(cache_id);
 		VCacheUnref(cache);
 	}
-#endif
 }
 
 /*

@@ -23,6 +23,7 @@
 #include "storage/proc.h"
 #include "storage/shmem.h"
 #include "storage/vcache.h"
+#include "storage/vchain_hash.h"
 #include "storage/vcluster.h"
 
 /* vcluster descriptor in shared memory*/
@@ -53,6 +54,8 @@ VClusterShmemSize(void)
 	Size		size = 0;
 
 	size = add_size(size, VCacheShmemSize());
+	size = add_size(size, VChainHashShmemSize(
+			NVChainExpected + NUM_VCHAIN_PARTITIONS));
 
 	return size;
 }
@@ -68,6 +71,7 @@ VClusterShmemInit(void)
 	bool		foundDesc;
 
 	VCacheInit();
+	VChainHashInit(NVChainExpected + NUM_VCHAIN_PARTITIONS);
 	
 	vclusters = (VClusterDesc *)
 		ShmemInitStruct("VCluster Descriptor",
@@ -148,6 +152,7 @@ VClusterDetachDsa(void)
  */
 void
 VClusterAppendTuple(VCLUSTER_TYPE cluster_type,
+					TransactionId xmin,
 					Size tuple_size,
 					void *tuple)
 {
@@ -156,6 +161,7 @@ VClusterAppendTuple(VCLUSTER_TYPE cluster_type,
 	dsa_pointer		new_seg;
 	VSegmentDesc	*new_seg_desc;
 	VSegmentId		reserved_seg_id;
+	int				vidx;
 
 	/*
 	 * Alined size with power of 2. This is needed because
@@ -211,6 +217,14 @@ retry:
 						  alloc_seg_offset,
 						  tuple_size,
 						  tuple);
+		
+		/* Set vlocator of the version tuple */
+		vidx = alloc_seg_offset / aligned_tuple_size;
+		seg_desc->locators[vidx].xmin = xmin;
+		seg_desc->locators[vidx].seg_id = seg_desc->seg_id;
+		seg_desc->locators[vidx].seg_offset = alloc_seg_offset;
+		seg_desc->locators[vidx].prev = NULL; /* TODO: here? or? */
+		seg_desc->locators[vidx].next = NULL;
 	}
 	else if (alloc_seg_offset <= VCLUSTER_SEGSIZE &&
 			 alloc_seg_offset + aligned_tuple_size > VCLUSTER_SEGSIZE)

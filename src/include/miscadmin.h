@@ -159,6 +159,7 @@ extern PGDLLIMPORT int data_directory_mode;
 extern PGDLLIMPORT int NBuffers;
 #ifndef HYU_LLT
 extern PGDLLIMPORT int NVCache;
+extern PGDLLIMPORT int NVChianExpected;
 #endif
 extern PGDLLIMPORT int MaxBackends;
 extern PGDLLIMPORT int MaxConnections;

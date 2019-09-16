@@ -88,6 +88,7 @@ extern void VClusterAttachDsa(void);
 extern void VClusterDetachDsa(void);
 
 extern void VClusterAppendTuple(VCLUSTER_TYPE cluster_type,
+								TransactionId xmin,
 								Size tuple_size,
 								void *tuple);
 

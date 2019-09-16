@@ -108,9 +108,9 @@ VCacheHashLookup(const VCacheTag *tagPtr, uint32 hashcode)
  * unless an entry already exists for that tag
  *
  * Returns -1 on successful insertion. If a conflicting entry exists
- * already, returns the buffer ID in that entry.
+ * already, returns the cache ID in that entry.
  *
- * Caller must hold exclusive lock on BufMappingLock for tag's partition
+ * Caller must hold exclusive lock on VCacheMappingLock for tag's partition
  */
 int
 VCacheHashInsert(const VCacheTag *tagPtr, uint32 hashcode, int cache_id)

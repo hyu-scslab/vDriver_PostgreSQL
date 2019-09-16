@@ -2935,8 +2935,13 @@ heap_update(Relation relation, ItemPointer otid, HeapTuple newtup,
 				infomask_new_tuple,
 				infomask2_new_tuple;
 #ifndef HYU_LLT
-	char		*oldp;
-	int			oldlen;
+	char		   *oldp;
+	int				oldlen;
+	TransactionId	xmin;
+	Datum			primary_key;
+	Bitmapset	   *bms_pk;
+	int				attnum_pk;
+	bool			is_null;
 #endif
 
 	Assert(ItemPointerIsValid(otid));
@@ -3695,14 +3700,37 @@ l2:
 	/* TODO: need to find the proper position for this code */
 	oldp = (char *) oldtup.t_data + oldtup.t_data->t_hoff;
 	oldlen = oldtup.t_len - oldtup.t_data->t_hoff;
+	xmin = oldtup.t_data->t_choice.t_heap.t_xmin;
+
+	/* Get primary key of the tuple */
+	bms_pk = RelationGetIndexAttrBitmap(
+			relation, INDEX_ATTR_BITMAP_PRIMARY_KEY);
+
+	/* At this time, we only support a relation having one primary key */
+	Assert(bms_num_members(bms_pk) == 1);
+	
+	/*
+	 * Need to add FirstLowInvalidHeapAttributeNumber to get the exact
+	 * attribute number of the primary key.
+	 * See the comment above RelationGetIndexAttrBitmap function.
+	 */
+	attnum_pk = bms_singleton_member(bms_pk) +
+			FirstLowInvalidHeapAttributeNumber;
+
+	/* Retrive the primary key from the old tuple */
+	primary_key = heap_getattr(
+			&oldtup, attnum_pk, relation->rd_att, &is_null);
+	
+	/* TODO: using primary_key, insert a new entry into the per-record hash */
+
 	{
 		int r = random() % 100;
 		if (r < 80)
-			VClusterAppendTuple(VCLUSTER_HOT, oldlen, oldp);
+			VClusterAppendTuple(VCLUSTER_HOT, xmin, oldlen, oldp);
 		else if (r < 90)
-			VClusterAppendTuple(VCLUSTER_COLD, oldlen, oldp);
+			VClusterAppendTuple(VCLUSTER_COLD, xmin, oldlen, oldp);
 		else
-			VClusterAppendTuple(VCLUSTER_LLT, oldlen, oldp);
+			VClusterAppendTuple(VCLUSTER_LLT, xmin, oldlen, oldp);
 	}
 #endif
 
