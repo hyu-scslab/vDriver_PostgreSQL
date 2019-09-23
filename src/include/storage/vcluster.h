@@ -14,6 +14,7 @@
 
 #include "c.h"
 #include "utils/dsa.h"
+#include "utils/snapshot.h"
 
 typedef enum {
 	VCLUSTER_HOT,
@@ -35,23 +36,37 @@ typedef uint32_t VSegmentId;
 typedef uint32_t VSegmentOffset;
 typedef uint32_t VSegmentPageId;
 
+typedef int64_t	PrimaryKey;
+
 typedef struct {
+	dsa_pointer			dsap;
+
 	TransactionId		xmin;
 	VSegmentId			seg_id;
 	VSegmentOffset		seg_offset;
 
 	/* Version chain pointer for a single tuple */
-	struct VLocator		*prev;
-	struct VLocator		*next;
+	//struct VLocator		*prev;
+	//struct VLocator		*next;
+
+	/*
+	 * Version chain pointer for a single tuple.
+	 * need to be converted from dsa_pointer to (VLocator *)
+	 */
+	dsa_pointer			dsap_prev;
+	dsa_pointer			dsap_next;
 } VLocator;
 
 typedef struct {
+	/* dsa pointer of this object */
+	dsa_pointer			dsap;
+
 	VSegmentId			seg_id;
 	TransactionId		xmin;
 	TransactionId		xmax;
 	
 	/* Need to be converted from dsa_pointer to (VSegmentDesc *) */
-	dsa_pointer			*next;
+	dsa_pointer			next;
 
 	/* Segment offset where the next version tuple will be appended.
 	 * Backend process will use fetch-and-add instruction on this variable
@@ -87,9 +102,15 @@ extern void VClusterDsaInit(void);
 extern void VClusterAttachDsa(void);
 extern void VClusterDetachDsa(void);
 
+extern bool VClusterLookupTuple(PrimaryKey primary_key,
+								Size size,
+								Snapshot snapshot,
+								void *ret_tuple);
+
 extern void VClusterAppendTuple(VCLUSTER_TYPE cluster_type,
+								PrimaryKey primary_key,
 								TransactionId xmin,
 								Size tuple_size,
-								void *tuple);
+								const void *tuple);
 
 #endif							/* VCLUSTER_H */

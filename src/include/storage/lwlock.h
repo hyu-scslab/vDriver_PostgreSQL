@@ -114,7 +114,7 @@ extern PGDLLIMPORT int NamedLWLockTrancheRequests;
 
 #ifndef HYU_LLT
 #define NUM_VCACHE_PARTITIONS  128
-#define NUM_VCHAIN_PARTITIONS  128
+#define NUM_VCHAIN_PARTITIONS  8192
 #endif
 
 /* Number of partitions the shared lock tables are divided into */

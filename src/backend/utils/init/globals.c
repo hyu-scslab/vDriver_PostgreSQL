@@ -132,7 +132,7 @@ int			NBuffers = 1000;
 #ifndef HYU_LLT
 /* TODO: Parameterize it - jongbin */
 int			NVCache = 1000;
-int			NVChainExpected = 10000;
+int			NVChainExpected = 100000;
 #endif
 int			MaxConnections = 90;
 int			max_worker_processes = 8;

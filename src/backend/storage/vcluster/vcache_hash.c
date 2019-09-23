@@ -131,6 +131,7 @@ VCacheHashInsert(const VCacheTag *tagPtr, uint32 hashcode, int cache_id)
 		return result->id;
 	
 	result->id = cache_id;
+	return -1;
 }
 
 /*

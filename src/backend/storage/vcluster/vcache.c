@@ -15,10 +15,13 @@
  */
 #include "postgres.h"
 
+#include <unistd.h>
+
 #include "storage/lwlock.h"
 #include "storage/shmem.h"
 #include "storage/vcache.h"
 #include "storage/vcache_hash.h"
+#include "utils/dynahash.h"
 
 VCacheDescPadded	*VCacheDescriptors;
 char				*VCacheBlocks;
@@ -56,7 +59,7 @@ VCacheShmemSize(void)
 
 	/* size of vcache descriptors */
 	size = add_size(size, mul_size(NVCache, sizeof(VCacheDescPadded)));
-	/* to allow aligning buffer descriptors */
+	/* to allow aligning cache descriptors */
 	size = add_size(size, PG_CACHE_LINE_SIZE);
 
 	/* size of data pages */
@@ -469,9 +472,9 @@ VCacheReadSegmentPage(const VCacheTag *tag, int cache_id)
 	 */
 	int ret;
 
-	ret = pread(seg_fds[tag->seg_id],
-				&VCacheBlocks[cache_id * SEG_PAGESZ],
-				SEG_PAGESZ, tag->page_id * SEG_PAGESZ);
+	ret = pg_pread(seg_fds[tag->seg_id],
+				   &VCacheBlocks[cache_id * SEG_PAGESZ],
+				   SEG_PAGESZ, tag->page_id * SEG_PAGESZ);
 	
 	Assert(ret == SEG_PAGESZ);
 }
@@ -490,9 +493,9 @@ VCacheWriteSegmentPage(const VCacheTag *tag, int cache_id)
 	 */
 	int ret;
 
-	ret = pwrite(seg_fds[tag->seg_id],
-				 &VCacheBlocks[cache_id * SEG_PAGESZ],
-				 SEG_PAGESZ, tag->page_id * SEG_PAGESZ);
+	ret = pg_pwrite(seg_fds[tag->seg_id],
+					&VCacheBlocks[cache_id * SEG_PAGESZ],
+					SEG_PAGESZ, tag->page_id * SEG_PAGESZ);
 
 	Assert(ret == SEG_PAGESZ);
 }

@@ -23,7 +23,7 @@
 #include "storage/proc.h"
 #include "storage/shmem.h"
 #include "storage/vcache.h"
-#include "storage/vchain_hash.h"
+#include "storage/vchain.h"
 #include "storage/vcluster.h"
 
 /* vcluster descriptor in shared memory*/
@@ -39,7 +39,8 @@ dsa_area		*dsa_vcluster;
 int seg_fds[VCLUSTER_MAX_SEGMENTS];
 
 /* decls for local routines only used within this module */
-static dsa_pointer AllocNewSegmentInternal(dsa_area *dsa, VCLUSTER_TYPE type);
+static dsa_pointer AllocNewSegmentInternal(dsa_area *dsa,
+										   VCLUSTER_TYPE type);
 static dsa_pointer AllocNewSegment(VCLUSTER_TYPE type);
 static void PrepareSegmentFile(VSegmentId seg_id);
 
@@ -54,8 +55,7 @@ VClusterShmemSize(void)
 	Size		size = 0;
 
 	size = add_size(size, VCacheShmemSize());
-	size = add_size(size, VChainHashShmemSize(
-			NVChainExpected + NUM_VCHAIN_PARTITIONS));
+	size = add_size(size, VChainShmemSize());
 
 	return size;
 }
@@ -71,7 +71,7 @@ VClusterShmemInit(void)
 	bool		foundDesc;
 
 	VCacheInit();
-	VChainHashInit(NVChainExpected + NUM_VCHAIN_PARTITIONS);
+	VChainInit();
 	
 	vclusters = (VClusterDesc *)
 		ShmemInitStruct("VCluster Descriptor",
@@ -146,19 +146,47 @@ VClusterDetachDsa(void)
 }
 
 /*
+ * VClusterReadTuple
+ *
+ * Find a visible version tuple with given primary key and snapshot.
+ * Returns true if found. Returns false if not found.
+ */
+bool
+VClusterLookupTuple(PrimaryKey primary_key,
+					Size size,
+					Snapshot snapshot,
+					void *ret_tuple)
+{
+	VLocator *locator;
+	if (!VChainLookupLocator(primary_key, snapshot, &locator))
+	{
+		/* Couldn't find the visible locator for the primary key */
+		return false;
+	}
+
+	VCacheReadTuple(locator->seg_id,
+					locator->seg_offset,
+					size,
+					ret_tuple);
+	
+	return true;
+}
+
+/*
  * VClusterAppendTuple
  *
  * Append a given tuple into the vcluster whose type is cluster_type
  */
 void
 VClusterAppendTuple(VCLUSTER_TYPE cluster_type,
+					PrimaryKey primary_key,
 					TransactionId xmin,
 					Size tuple_size,
-					void *tuple)
+					const void *tuple)
 {
 	VSegmentDesc 	*seg_desc;
 	int				alloc_seg_offset;
-	dsa_pointer		new_seg;
+	dsa_pointer		dsap_new_seg;
 	VSegmentDesc	*new_seg_desc;
 	VSegmentId		reserved_seg_id;
 	int				vidx;
@@ -185,7 +213,7 @@ retry:
 	 * the reserved segment id could be same.
 	 */
 	seg_desc = (VSegmentDesc *)dsa_get_address(
-				dsa_vcluster, vclusters->head[cluster_type]);
+			dsa_vcluster, vclusters->head[cluster_type]);
 	pg_memory_barrier();
 	reserved_seg_id = vclusters->reserved_seg_id[cluster_type];
 	
@@ -223,8 +251,11 @@ retry:
 		seg_desc->locators[vidx].xmin = xmin;
 		seg_desc->locators[vidx].seg_id = seg_desc->seg_id;
 		seg_desc->locators[vidx].seg_offset = alloc_seg_offset;
-		seg_desc->locators[vidx].prev = NULL; /* TODO: here? or? */
-		seg_desc->locators[vidx].next = NULL;
+		seg_desc->locators[vidx].dsap_prev = 0;
+		seg_desc->locators[vidx].dsap_next = 0;
+
+		/* Append the locator into the version chain */
+		VChainAppendLocator(primary_key, &seg_desc->locators[vidx]);
 	}
 	else if (alloc_seg_offset <= VCLUSTER_SEGSIZE &&
 			 alloc_seg_offset + aligned_tuple_size > VCLUSTER_SEGSIZE)
@@ -233,13 +264,13 @@ retry:
 		
 		/* TODO: If multiple process(foreground/background) prepare
 		 * a new segment concurrently, need to add some arbitration code */
-		new_seg = AllocNewSegment(cluster_type);
+		dsap_new_seg = AllocNewSegment(cluster_type);
 
 		/* Segment descriptor chain remains new to old */
 		new_seg_desc =
-				(VSegmentDesc *)dsa_get_address(dsa_vcluster, new_seg);
+				(VSegmentDesc *)dsa_get_address(dsa_vcluster, dsap_new_seg);
 		new_seg_desc->next = vclusters->head[cluster_type];
-		vclusters->head[cluster_type] = new_seg;
+		vclusters->head[cluster_type] = dsap_new_seg;
 		pg_memory_barrier();
 		goto retry;
 	}
@@ -279,11 +310,20 @@ AllocNewSegmentInternal(dsa_area *dsa, VCLUSTER_TYPE cluster_type)
 
 	/* Initialize the segment descriptor */
 	seg_desc = (VSegmentDesc *)dsa_get_address(dsa, ret);
+	seg_desc->dsap = ret;
 	seg_desc->seg_id = new_seg_id;
 	seg_desc->xmin = 0;
 	seg_desc->xmax = 0;
 	seg_desc->next = 0;
 	pg_atomic_init_u32(&seg_desc->seg_offset, 0);
+
+	/* Initialize the all vlocators in the segment index */
+	for (int i = 0; i < VCLUSTER_SEG_NUM_ENTRY; i++)
+	{
+		/* Each vlocator contains its dsa_pointer itself */
+		seg_desc->locators[i].dsap =
+				ret + offsetof(VSegmentDesc, locators[i]);
+	}
 
 	/* Allocate a new segment file */
 	PrepareSegmentFile(new_seg_id);

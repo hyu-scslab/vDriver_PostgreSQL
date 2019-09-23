@@ -523,6 +523,19 @@ ExecIndexScan(PlanState *pstate)
 {
 	IndexScanState *node = castNode(IndexScanState, pstate);
 
+#ifndef HYU_LLT
+	/*
+	 * To get the primary key information from the relation at the lookup
+	 * path, it must be cached. We do it here, at the start of the plan.
+	 */
+	if (node->ss.ss_currentRelation->rd_indexattr == NULL)
+	{
+		RelationGetIndexAttrBitmap(node->ss.ss_currentRelation,
+								   INDEX_ATTR_BITMAP_PRIMARY_KEY);
+	}
+#endif
+
+
 	/*
 	 * If we have runtime keys and they've not already been set up, do it now.
 	 */

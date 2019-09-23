@@ -14,8 +14,6 @@
 
 #include "storage/vcluster.h"
 
-typedef int64_t	PrimaryKey;
-
 /* in globals.c ... this duplicates miscadmin.h */
 extern PGDLLIMPORT int NVChainExpected;
 
@@ -38,10 +36,10 @@ extern uint32 VChainHashCode(const PrimaryKey *tagPtr);
 
 extern bool VChainHashLookup(const PrimaryKey *tagPtr,
 							 uint32 hashcode,
-							 VLocator *ret);
+							 dsa_pointer *ret);
 extern bool VChainHashInsert(const PrimaryKey *tagPtr,
 							 uint32 hashcode,
-							 VLocator *ret);
+							 dsa_pointer *ret);
 extern void VChainHashDelete(const PrimaryKey *tagPtr,
 							 uint32 hashcode);
 

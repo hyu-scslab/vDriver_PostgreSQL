@@ -1537,6 +1537,15 @@ heap_hot_search_buffer(ItemPointer tid, Relation relation, Buffer buffer,
 	bool		at_chain_start;
 	bool		valid;
 	bool		skip;
+#ifndef HYU_LLT
+	Datum			primary_key;
+	Bitmapset	   *bms_pk;
+	int				attnum_pk;
+	bool			is_null;
+
+	/* Test variables */
+	HeapTupleHeader	org_tuple_header;
+#endif
 
 	/* If this is not the first call, previous call returned a (live!) tuple */
 	if (all_dead)
@@ -1622,6 +1631,81 @@ heap_hot_search_buffer(ItemPointer tid, Relation relation, Buffer buffer,
 				PredicateLockTuple(relation, heapTuple, snapshot);
 				if (all_dead)
 					*all_dead = false;
+
+#ifndef HYU_LLT
+			/*
+			 * We just checked the visibility above and found the tuple, so
+			 * try to find the visible version in the chain again and compare.
+			 */
+			org_tuple_header = (HeapTupleHeader)(heapTuple->t_data);
+			if (relation->rd_indexattr != NULL &&
+				org_tuple_header->t_choice.t_heap.t_xmax != 0)
+			{
+				/*
+				 * Get a bitmapset of the primary key of the tuple.
+				 * RelationGetIndexAttrBitmap function calls here recursively
+				 * if the attr is not cached yet. To avoid the infinite
+				 * recursive call, we mark the flag being_read_idxattr here.
+				 */
+				bms_pk = RelationGetIndexAttrBitmap(
+					relation, INDEX_ATTR_BITMAP_PRIMARY_KEY);
+
+			/*
+			 * At this time, we only support a relation having one primary key.
+			 * Some of background process could get into here with a bitmapset
+			 * with size 0, so we ignore that cases.
+			 */
+			if (bms_num_members(bms_pk) == 1)
+			{
+				char tmpbuf[256];
+				/*
+				 * Need to add FirstLowInvalidHeapAttributeNumber to get the
+				 * exact attribute number of the primary key.
+				 * See the comment above RelationGetIndexAttrBitmap function.
+				 */
+				attnum_pk = bms_singleton_member(bms_pk) +
+						FirstLowInvalidHeapAttributeNumber;
+
+				/* Retrive the primary key from the old tuple */
+				primary_key = heap_getattr(
+						heapTuple, attnum_pk, relation->rd_att, &is_null);
+				
+				memset(tmpbuf, 0, 256);
+				if (VClusterLookupTuple(primary_key, heapTuple->t_len,
+										snapshot, tmpbuf))
+				{
+					/* Verify it */
+				int i;
+				char orgbuf[256];
+				memset(orgbuf, 0, 256);
+				memcpy(orgbuf, heapTuple->t_data, heapTuple->t_len);
+				for (i = 0; i < heapTuple->t_len; i++)
+				{
+					//if (tmpbuf[i] == 0) tmpbuf[i] = ' ';
+					//if (orgbuf[i] == 0) orgbuf[i] = ' ';
+					if (tmpbuf[i] != orgbuf[i])
+						break;
+				}
+				if (i == heapTuple->t_len)
+				{
+//					ereport(LOG, (errmsg("@@ VCHAIN VERIFIED SUCCESS")));
+				}
+				else
+				{
+//				ereport(LOG, (errmsg(
+//				"@@ VCHAIN VERIFIED FAILED, tmpbuf: %s, orgbuf(%d): %s",
+//				tmpbuf, heapTuple->t_len, orgbuf)));
+				}
+				}
+				else
+				{
+					ereport(LOG, (errmsg("@@ VCHAIN NOT FOUND")));
+				}
+			}
+			}
+#endif
+
+
 				return true;
 			}
 		}
@@ -3696,44 +3780,6 @@ l2:
 		MarkBufferDirty(newbuf);
 	MarkBufferDirty(buffer);
 
-#ifndef HYU_LLT
-	/* TODO: need to find the proper position for this code */
-	oldp = (char *) oldtup.t_data + oldtup.t_data->t_hoff;
-	oldlen = oldtup.t_len - oldtup.t_data->t_hoff;
-	xmin = oldtup.t_data->t_choice.t_heap.t_xmin;
-
-	/* Get primary key of the tuple */
-	bms_pk = RelationGetIndexAttrBitmap(
-			relation, INDEX_ATTR_BITMAP_PRIMARY_KEY);
-
-	/* At this time, we only support a relation having one primary key */
-	Assert(bms_num_members(bms_pk) == 1);
-	
-	/*
-	 * Need to add FirstLowInvalidHeapAttributeNumber to get the exact
-	 * attribute number of the primary key.
-	 * See the comment above RelationGetIndexAttrBitmap function.
-	 */
-	attnum_pk = bms_singleton_member(bms_pk) +
-			FirstLowInvalidHeapAttributeNumber;
-
-	/* Retrive the primary key from the old tuple */
-	primary_key = heap_getattr(
-			&oldtup, attnum_pk, relation->rd_att, &is_null);
-	
-	/* TODO: using primary_key, insert a new entry into the per-record hash */
-
-	{
-		int r = random() % 100;
-		if (r < 80)
-			VClusterAppendTuple(VCLUSTER_HOT, xmin, oldlen, oldp);
-		else if (r < 90)
-			VClusterAppendTuple(VCLUSTER_COLD, xmin, oldlen, oldp);
-		else
-			VClusterAppendTuple(VCLUSTER_LLT, xmin, oldlen, oldp);
-	}
-#endif
-
 	/* XLOG stuff */
 	if (RelationNeedsWAL(relation))
 	{
@@ -3761,7 +3807,70 @@ l2:
 		PageSetLSN(BufferGetPage(buffer), recptr);
 	}
 
-	END_CRIT_SECTION();
+#ifndef HYU_LLT
+	/* TODO: need to find the proper position for this code */
+	//oldp = (char *) oldtup.t_data + oldtup.t_data->t_hoff;
+	//oldlen = oldtup.t_len - oldtup.t_data->t_hoff;
+	xmin = oldtup.t_data->t_choice.t_heap.t_xmin;
+
+	/* Get a bitmapset of the primary key of the tuple */
+	bms_pk = RelationGetIndexAttrBitmap(
+			relation, INDEX_ATTR_BITMAP_PRIMARY_KEY);
+
+	/*
+	 * At this time, we only support a relation having one primary key.
+	 * Some of background process could get into here with a bitmapset
+	 * with size 0, so we ignore that cases.
+	 */
+	if (bms_num_members(bms_pk) == 1)
+	{
+		/*
+		 * Need to add FirstLowInvalidHeapAttributeNumber to get the exact
+		 * attribute number of the primary key.
+		 * See the comment above RelationGetIndexAttrBitmap function.
+		 */
+		attnum_pk = bms_singleton_member(bms_pk) +
+				FirstLowInvalidHeapAttributeNumber;
+
+		/* Retrive the primary key from the old tuple */
+		primary_key = heap_getattr(
+				&oldtup, attnum_pk, relation->rd_att, &is_null);
+		
+		{
+		int r = random() % 100;
+		if (r < 80)
+			VClusterAppendTuple(VCLUSTER_HOT, primary_key, xmin,
+								oldtup.t_len, oldtup.t_data);
+		else if (r < 90)
+			VClusterAppendTuple(VCLUSTER_COLD, primary_key, xmin,
+								oldtup.t_len, oldtup.t_data);
+		else
+			VClusterAppendTuple(VCLUSTER_LLT, primary_key, xmin,
+								oldtup.t_len, oldtup.t_data);
+		}
+#if 1
+		{
+			char written[256];
+			memset(written, 0, 256);
+			memcpy(written, oldtup.t_data, oldtup.t_len);
+			for (int i = 0; i < 214; i++)
+			{
+				if (written[i] == 0) written[i] = ' ';
+			}
+			ereport(LOG, (errmsg("@@ Written Tuple(%d): %s", primary_key, written)));
+		}
+#endif
+	}
+	else
+	{
+		ereport(LOG, (errmsg(
+				"@@ heap_update, with bitmapset whose size is %d",
+				bms_num_members(bms_pk))));
+	}
+#endif
+
+
+	END_CRIT_SECTION();	
 
 	if (newbuf != buffer)
 		LockBuffer(newbuf, BUFFER_LOCK_UNLOCK);

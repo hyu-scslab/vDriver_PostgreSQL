@@ -28,10 +28,11 @@ typedef struct
 	PrimaryKey	key;
 
 	/*
-	 * head/tail of the chain. prev field indicates the tail node, and
+	 * dsa_pointer of the chain.
+	 * In the chain (vlocator), prev field indicates the tail node, and
 	 * next field indicates the head node.
 	 */
-	VLocator	vlocator;
+	dsa_pointer	dsap_chain;
 } VChainLookupEnt;
 
 static HTAB *SharedVChainHash;
@@ -91,9 +92,10 @@ VChainHashCode(const PrimaryKey *tagPtr)
  * Caller must hold at least share lock on VChainMappingLock for tag's partition
  */
 bool
-VChainHashLookup(const PrimaryKey *tagPtr, uint32 hashcode, VLocator *ret)
+VChainHashLookup(const PrimaryKey *tagPtr, uint32 hashcode, dsa_pointer *ret)
 {
 	VChainLookupEnt *result;
+	VLocator		*chain;
 
 	result = (VChainLookupEnt *)
 			hash_search_with_hash_value(SharedVChainHash,
@@ -103,11 +105,11 @@ VChainHashLookup(const PrimaryKey *tagPtr, uint32 hashcode, VLocator *ret)
 										NULL);
 	if (!result)
 	{
-		ret = NULL;
+		*ret = 0;
 		return false;
 	}
 
-	ret = &result->vlocator;
+	*ret = result->dsap_chain;
 	return true;
 }
 
@@ -116,24 +118,25 @@ VChainHashLookup(const PrimaryKey *tagPtr, uint32 hashcode, VLocator *ret)
  *
  * Insert a hashtable entry for given primary key and head/tail of the chain,
  * unless an entry already exists for that key.
- * New hash table entry (VLocator) will always be intialized so that the
+ * New hash table entry will always be intialized so that the
  * caller should insert the first version of the chain itself.
  *
- * Returns true and set ret to new entry on successful insertion.
- * If a conflicting entry exists already, set ret to existing entry and
- * returns false.
+ * Returns true and sets ret to dsa_pointer of new entry on success.
+ * If a conflicting entry exists already, sets ret to dsa_pointer of
+ * existing entry and returns false.
  *
  * Caller must hold exclusive lock on VChainMappingLock for tag's partition
  */
 bool
-VChainHashInsert(const PrimaryKey *tagPtr, uint32 hashcode, VLocator *ret)
+VChainHashInsert(const PrimaryKey *tagPtr,
+				 uint32 hashcode,
+				 dsa_pointer *ret)
 {
 	VChainLookupEnt    *result;
 	bool				found;
-	VLocator			vlocator;
+	dsa_pointer			dsap_new_locator;
+	VLocator		   *new_locator;
 
-	memset(&vlocator, 0, sizeof(VLocator));
-	
 	result = (VChainLookupEnt *)
 			hash_search_with_hash_value(SharedVChainHash,
 										(void *) tagPtr,
@@ -144,12 +147,26 @@ VChainHashInsert(const PrimaryKey *tagPtr, uint32 hashcode, VLocator *ret)
 	if (found)
 	{
 		/* found something already in the table */
-		ret = &result->vlocator;
+		*ret = result->dsap_chain;
 		return false;
 	}
 
-	result->vlocator = vlocator;
-	ret = &result->vlocator;
+	/* Allocatate a new dummy vlocator for the chain */
+	dsap_new_locator = dsa_allocate_extended(
+			dsa_vcluster, sizeof(VLocator), DSA_ALLOC_ZERO);
+
+	/* Initialize the new dummy node */
+	new_locator = (VLocator *)dsa_get_address(dsa_vcluster, dsap_new_locator);
+	new_locator->dsap = dsap_new_locator;
+
+	/* Initial dummy node has a self cycle */
+	new_locator->dsap_prev = dsap_new_locator;
+	new_locator->dsap_next = dsap_new_locator;
+
+	/* Link the chain from the hash entry */
+	result->dsap_chain = dsap_new_locator;
+	
+	*ret = result->dsap_chain;
 
 	return true;
 }
@@ -162,7 +179,8 @@ VChainHashInsert(const PrimaryKey *tagPtr, uint32 hashcode, VLocator *ret)
  * Caller must hold exclusive lock on VChainMappingLock for pkey's partition
  */
 void
-VChainHashDelete(const PrimaryKey *tagPtr, uint32 hashcode)
+VChainHashDelete(const PrimaryKey *tagPtr,
+				 uint32 hashcode)
 {
 	VChainLookupEnt *result;
 
@@ -175,6 +193,8 @@ VChainHashDelete(const PrimaryKey *tagPtr, uint32 hashcode)
 	
 	if (!result)				/* shouldn't happen */
 		elog(ERROR, "shared vchain hash table corrupted");
+
+	/* Release dummy node */
+	dsa_free(dsa_vcluster, result->dsap_chain);
 }
 
-/* TODO: make a corresponding header file, and need to think about removing vlocator parameter of insertion api */
