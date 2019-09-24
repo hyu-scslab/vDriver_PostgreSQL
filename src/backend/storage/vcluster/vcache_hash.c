@@ -14,6 +14,7 @@
  *
  *-------------------------------------------------------------------------
  */
+#ifndef HYU_LLT
 #include "postgres.h"
 
 #include "storage/lwlock.h"
@@ -157,3 +158,4 @@ VCacheHashDelete(const VCacheTag *tagPtr, uint32 hashcode)
 		elog(ERROR, "shared vcache hash table corrupted");
 }
 
+#endif /* HYU_LLT */

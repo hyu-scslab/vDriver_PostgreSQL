@@ -13,6 +13,7 @@
  *
  *-------------------------------------------------------------------------
  */
+#ifndef HYU_LLT
 #include "postgres.h"
 
 #include "storage/lwlock.h"
@@ -84,8 +85,10 @@ VChainLookupLocator(PrimaryKey primary_key,
 
 	chain = (VLocator *)dsa_get_address(dsa_vcluster, dsap_chain);
 	if (chain->dsap_prev == chain->dsap)
+	{
 		/* There is a hash entry, but the version chain is empty */
 		return false;
+	}
 
 	/*
 	 * Now we have the hash entry (dummy node) that indicates the
@@ -165,3 +168,4 @@ VChainAppendLocator(PrimaryKey primary_key, VLocator *locator)
 	}
 }
 
+#endif /* HYU_LLT */

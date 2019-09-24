@@ -14,7 +14,7 @@
  *
  *-------------------------------------------------------------------------
  */
-
+#ifndef HYU_LLT
 #include "postgres.h"
 
 /*
@@ -71,3 +71,4 @@ VPoolShmemInit(char *pool_name, int size_pool, int bytes_entry)
 	return vpool;
 }
 
+#endif /* HYU_LLT */

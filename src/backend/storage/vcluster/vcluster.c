@@ -14,6 +14,7 @@
  *
  *-------------------------------------------------------------------------
  */
+#ifndef HYU_LLT
 #include "postgres.h"
 
 #include <fcntl.h>
@@ -367,3 +368,4 @@ static void PrepareSegmentFile(VSegmentId seg_id)
 	seg_fds[seg_id] = fd;
 }
 
+#endif /* HYU_LLT */

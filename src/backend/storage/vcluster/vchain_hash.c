@@ -14,6 +14,7 @@
  *
  *-------------------------------------------------------------------------
  */
+#ifndef HYU_LLT
 #include "postgres.h"
 
 #include "storage/lwlock.h"
@@ -95,7 +96,6 @@ bool
 VChainHashLookup(const PrimaryKey *tagPtr, uint32 hashcode, dsa_pointer *ret)
 {
 	VChainLookupEnt *result;
-	VLocator		*chain;
 
 	result = (VChainLookupEnt *)
 			hash_search_with_hash_value(SharedVChainHash,
@@ -198,3 +198,4 @@ VChainHashDelete(const PrimaryKey *tagPtr,
 	dsa_free(dsa_vcluster, result->dsap_chain);
 }
 
+#endif /* HYU_LLT */

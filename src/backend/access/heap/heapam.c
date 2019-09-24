@@ -1639,7 +1639,8 @@ heap_hot_search_buffer(ItemPointer tid, Relation relation, Buffer buffer,
 			 */
 			org_tuple_header = (HeapTupleHeader)(heapTuple->t_data);
 			if (relation->rd_indexattr != NULL &&
-				org_tuple_header->t_choice.t_heap.t_xmax != 0)
+				org_tuple_header->t_choice.t_heap.t_xmax != 0 &&
+				!(org_tuple_header->t_infomask & HEAP_XMAX_INVALID))
 			{
 				/*
 				 * Get a bitmapset of the primary key of the tuple.
@@ -1671,36 +1672,101 @@ heap_hot_search_buffer(ItemPointer tid, Relation relation, Buffer buffer,
 						heapTuple, attnum_pk, relation->rd_att, &is_null);
 				
 				memset(tmpbuf, 0, 256);
+
+				/* Find the old version from the vcluster */
+				VClusterLookupTuple(primary_key, heapTuple->t_len,
+									snapshot, tmpbuf);
+#if 0 // Lookup and verify
 				if (VClusterLookupTuple(primary_key, heapTuple->t_len,
 										snapshot, tmpbuf))
 				{
 					/* Verify it */
-				int i;
+				bool failed = false;
 				char orgbuf[256];
+
 				memset(orgbuf, 0, 256);
 				memcpy(orgbuf, heapTuple->t_data, heapTuple->t_len);
-				for (i = 0; i < heapTuple->t_len; i++)
+				for (int i = heapTuple->t_data->t_hoff;
+						i < heapTuple->t_len - heapTuple->t_data->t_hoff; i++)
 				{
-					//if (tmpbuf[i] == 0) tmpbuf[i] = ' ';
-					//if (orgbuf[i] == 0) orgbuf[i] = ' ';
 					if (tmpbuf[i] != orgbuf[i])
+					{
+						failed = true;
 						break;
+					}
 				}
-				if (i == heapTuple->t_len)
+				if (!failed)
 				{
-//					ereport(LOG, (errmsg("@@ VCHAIN VERIFIED SUCCESS")));
+					ereport(LOG, (errmsg("@@ VCHAIN VERIFIED SUCCESS")));
 				}
 				else
 				{
-//				ereport(LOG, (errmsg(
-//				"@@ VCHAIN VERIFIED FAILED, tmpbuf: %s, orgbuf(%d): %s",
-//				tmpbuf, heapTuple->t_len, orgbuf)));
+				ereport(LOG, (errmsg("@@ VCHAIN VERIFIED FAILED")));
+				ereport(LOG, (errmsg("@@ (%d) org xmin: %d, xmax: %d",
+						primary_key, org_tuple_header->t_choice.t_heap.t_xmin,
+						org_tuple_header->t_choice.t_heap.t_xmax)));
+				ereport(LOG, (errmsg("@@ SNAPSHOT xmin: %d, xmax: %d",
+						snapshot->xmin, snapshot->xmax)));
+				ereport(LOG, (errmsg("HeapTupleHeaderXminCommitted: %d",
+						HeapTupleHeaderXminCommitted(org_tuple_header))));
+				ereport(LOG, (errmsg("HeapTupleHeaderXminFrozen: %d",
+						HeapTupleHeaderXminFrozen(org_tuple_header))));
+				ereport(LOG, (errmsg("XidInMVCCSnapshot(xmax): %d",
+						XidInMVCCSnapshot(
+						org_tuple_header->t_choice.t_heap.t_xmax, snapshot))));
+				ereport(LOG, (errmsg(
+						"tuple->t_infomask & HEAP_XMAX_INVALID: %d",
+						org_tuple_header->t_infomask & HEAP_XMAX_INVALID)));
+				ereport(LOG, (errmsg(
+						"HEAP_XMAX_IS_LOCKED_ONLY(tuple->t_infomask): %d",
+						HEAP_XMAX_IS_LOCKED_ONLY(org_tuple_header->t_infomask))));
+				ereport(LOG, (errmsg(
+						"tuple->t_infomask & HEAP_XMAX_IS_MULTI: %d",
+						org_tuple_header->t_infomask & HEAP_XMAX_IS_MULTI)));
+				ereport(LOG, (errmsg(
+						"tuple->t_infomask & HEAP_XMAX_COMMITTED: %d",
+						org_tuple_header->t_infomask & HEAP_XMAX_COMMITTED)));
+				ereport(LOG, (errmsg("tuple->t_infomask: %d",
+						org_tuple_header->t_infomask)));
+				ereport(LOG, (errmsg("version->t_infomask: %d",
+						(((HeapTupleHeader)(tmpbuf))->t_infomask))));
+				for (int i = 0; i < heapTuple->t_len; i++)
+				{
+					if (tmpbuf[i] == 0) tmpbuf[i] = ' ';
+					if (orgbuf[i] == 0) orgbuf[i] = ' ';
+				}
+				ereport(LOG, (errmsg("@@ tmpbuf: %s, orgbuf(%d): %s",
+						tmpbuf, heapTuple->t_len, orgbuf)));
+
+				for (int j = 0; j < snapshot->xcnt; j++)
+				{
+					ereport(LOG, (errmsg("## snapshot[%d]: %d", j, snapshot->xip[j])));
+				}
 				}
 				}
 				else
 				{
-					ereport(LOG, (errmsg("@@ VCHAIN NOT FOUND")));
+					ereport(LOG, (errmsg(
+							"@@ VCHAIN NOT FOUND (%d), org xmin: %d, xmax: %d",
+							primary_key, org_tuple_header->t_choice.t_heap.t_xmin,
+							org_tuple_header->t_choice.t_heap.t_xmax)));
+					ereport(LOG, (errmsg("@@ SNAPSHOT xmin: %d, xmax: %d",
+							snapshot->xmin, snapshot->xmax)));
+					ereport(LOG, (errmsg("HeapTupleHeaderXminCommitted: %d",
+							HeapTupleHeaderXminCommitted(org_tuple_header))));
+					ereport(LOG, (errmsg("HeapTupleHeaderXminFrozen: %d",
+							HeapTupleHeaderXminFrozen(org_tuple_header))));
+					ereport(LOG, (errmsg("XidInMVCCSnapshot(xmax): %d",
+							XidInMVCCSnapshot(
+							org_tuple_header->t_choice.t_heap.t_xmax, snapshot))));
+					ereport(LOG, (errmsg(
+							"tuple->t_infomask & HEAP_XMAX_INVALID: %d",
+							org_tuple_header->t_infomask & HEAP_XMAX_INVALID)));
+					ereport(LOG, (errmsg(
+							"HEAP_XMAX_IS_LOCKED_ONLY(tuple->t_infomask): %d",
+							HEAP_XMAX_IS_LOCKED_ONLY(org_tuple_header->t_infomask))));
 				}
+#endif
 			}
 			}
 #endif
@@ -3019,8 +3085,6 @@ heap_update(Relation relation, ItemPointer otid, HeapTuple newtup,
 				infomask_new_tuple,
 				infomask2_new_tuple;
 #ifndef HYU_LLT
-	char		   *oldp;
-	int				oldlen;
 	TransactionId	xmin;
 	Datum			primary_key;
 	Bitmapset	   *bms_pk;
@@ -3809,8 +3873,6 @@ l2:
 
 #ifndef HYU_LLT
 	/* TODO: need to find the proper position for this code */
-	//oldp = (char *) oldtup.t_data + oldtup.t_data->t_hoff;
-	//oldlen = oldtup.t_len - oldtup.t_data->t_hoff;
 	xmin = oldtup.t_data->t_choice.t_heap.t_xmin;
 
 	/* Get a bitmapset of the primary key of the tuple */
@@ -3848,7 +3910,7 @@ l2:
 			VClusterAppendTuple(VCLUSTER_LLT, primary_key, xmin,
 								oldtup.t_len, oldtup.t_data);
 		}
-#if 1
+#if 0
 		{
 			char written[256];
 			memset(written, 0, 256);
@@ -3860,12 +3922,6 @@ l2:
 			ereport(LOG, (errmsg("@@ Written Tuple(%d): %s", primary_key, written)));
 		}
 #endif
-	}
-	else
-	{
-		ereport(LOG, (errmsg(
-				"@@ heap_update, with bitmapset whose size is %d",
-				bms_num_members(bms_pk))));
 	}
 #endif
 

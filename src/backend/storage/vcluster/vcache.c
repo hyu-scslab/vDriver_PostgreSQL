@@ -13,6 +13,7 @@
  *
  *-------------------------------------------------------------------------
  */
+#ifndef HYU_LLT
 #include "postgres.h"
 
 #include <unistd.h>
@@ -500,3 +501,4 @@ VCacheWriteSegmentPage(const VCacheTag *tag, int cache_id)
 	Assert(ret == SEG_PAGESZ);
 }
 
+#endif /* HYU_LLT */
