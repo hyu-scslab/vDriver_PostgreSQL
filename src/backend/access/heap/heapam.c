@@ -62,6 +62,9 @@
 #include "storage/smgr.h"
 #include "storage/spin.h"
 #include "storage/standby.h"
+#ifndef HYU_LLT
+#include "storage/vcluster.h"
+#endif
 #include "utils/datum.h"
 #include "utils/inval.h"
 #include "utils/lsyscache.h"
@@ -1534,6 +1537,15 @@ heap_hot_search_buffer(ItemPointer tid, Relation relation, Buffer buffer,
 	bool		at_chain_start;
 	bool		valid;
 	bool		skip;
+#ifndef HYU_LLT
+	Datum			primary_key;
+	Bitmapset	   *bms_pk;
+	int				attnum_pk;
+	bool			is_null;
+
+	/* Test variables */
+	HeapTupleHeader	org_tuple_header;
+#endif
 
 	/* If this is not the first call, previous call returned a (live!) tuple */
 	if (all_dead)
@@ -1619,6 +1631,147 @@ heap_hot_search_buffer(ItemPointer tid, Relation relation, Buffer buffer,
 				PredicateLockTuple(relation, heapTuple, snapshot);
 				if (all_dead)
 					*all_dead = false;
+
+#ifndef HYU_LLT
+			/*
+			 * We just checked the visibility above and found the tuple, so
+			 * try to find the visible version in the chain again and compare.
+			 */
+			org_tuple_header = (HeapTupleHeader)(heapTuple->t_data);
+			if (relation->rd_indexattr != NULL &&
+				org_tuple_header->t_choice.t_heap.t_xmax != 0 &&
+				!(org_tuple_header->t_infomask & HEAP_XMAX_INVALID))
+			{
+				/*
+				 * Get a bitmapset of the primary key of the tuple.
+				 * RelationGetIndexAttrBitmap function calls here recursively
+				 * if the attr is not cached yet. To avoid the infinite
+				 * recursive call, we mark the flag being_read_idxattr here.
+				 */
+				bms_pk = RelationGetIndexAttrBitmap(
+					relation, INDEX_ATTR_BITMAP_PRIMARY_KEY);
+
+			/*
+			 * At this time, we only support a relation having one primary key.
+			 * Some of background process could get into here with a bitmapset
+			 * with size 0, so we ignore that cases.
+			 */
+			if (bms_num_members(bms_pk) == 1)
+			{
+				char tmpbuf[256];
+				/*
+				 * Need to add FirstLowInvalidHeapAttributeNumber to get the
+				 * exact attribute number of the primary key.
+				 * See the comment above RelationGetIndexAttrBitmap function.
+				 */
+				attnum_pk = bms_singleton_member(bms_pk) +
+						FirstLowInvalidHeapAttributeNumber;
+
+				/* Retrive the primary key from the old tuple */
+				primary_key = heap_getattr(
+						heapTuple, attnum_pk, relation->rd_att, &is_null);
+				
+				memset(tmpbuf, 0, 256);
+
+				/* Find the old version from the vcluster */
+				VClusterLookupTuple(primary_key, heapTuple->t_len,
+									snapshot, tmpbuf);
+#if 0 // Lookup and verify
+				if (VClusterLookupTuple(primary_key, heapTuple->t_len,
+										snapshot, tmpbuf))
+				{
+					/* Verify it */
+				bool failed = false;
+				char orgbuf[256];
+
+				memset(orgbuf, 0, 256);
+				memcpy(orgbuf, heapTuple->t_data, heapTuple->t_len);
+				for (int i = heapTuple->t_data->t_hoff;
+						i < heapTuple->t_len - heapTuple->t_data->t_hoff; i++)
+				{
+					if (tmpbuf[i] != orgbuf[i])
+					{
+						failed = true;
+						break;
+					}
+				}
+				if (!failed)
+				{
+					ereport(LOG, (errmsg("@@ VCHAIN VERIFIED SUCCESS")));
+				}
+				else
+				{
+				ereport(LOG, (errmsg("@@ VCHAIN VERIFIED FAILED")));
+				ereport(LOG, (errmsg("@@ (%d) org xmin: %d, xmax: %d",
+						primary_key, org_tuple_header->t_choice.t_heap.t_xmin,
+						org_tuple_header->t_choice.t_heap.t_xmax)));
+				ereport(LOG, (errmsg("@@ SNAPSHOT xmin: %d, xmax: %d",
+						snapshot->xmin, snapshot->xmax)));
+				ereport(LOG, (errmsg("HeapTupleHeaderXminCommitted: %d",
+						HeapTupleHeaderXminCommitted(org_tuple_header))));
+				ereport(LOG, (errmsg("HeapTupleHeaderXminFrozen: %d",
+						HeapTupleHeaderXminFrozen(org_tuple_header))));
+				ereport(LOG, (errmsg("XidInMVCCSnapshot(xmax): %d",
+						XidInMVCCSnapshot(
+						org_tuple_header->t_choice.t_heap.t_xmax, snapshot))));
+				ereport(LOG, (errmsg(
+						"tuple->t_infomask & HEAP_XMAX_INVALID: %d",
+						org_tuple_header->t_infomask & HEAP_XMAX_INVALID)));
+				ereport(LOG, (errmsg(
+						"HEAP_XMAX_IS_LOCKED_ONLY(tuple->t_infomask): %d",
+						HEAP_XMAX_IS_LOCKED_ONLY(org_tuple_header->t_infomask))));
+				ereport(LOG, (errmsg(
+						"tuple->t_infomask & HEAP_XMAX_IS_MULTI: %d",
+						org_tuple_header->t_infomask & HEAP_XMAX_IS_MULTI)));
+				ereport(LOG, (errmsg(
+						"tuple->t_infomask & HEAP_XMAX_COMMITTED: %d",
+						org_tuple_header->t_infomask & HEAP_XMAX_COMMITTED)));
+				ereport(LOG, (errmsg("tuple->t_infomask: %d",
+						org_tuple_header->t_infomask)));
+				ereport(LOG, (errmsg("version->t_infomask: %d",
+						(((HeapTupleHeader)(tmpbuf))->t_infomask))));
+				for (int i = 0; i < heapTuple->t_len; i++)
+				{
+					if (tmpbuf[i] == 0) tmpbuf[i] = ' ';
+					if (orgbuf[i] == 0) orgbuf[i] = ' ';
+				}
+				ereport(LOG, (errmsg("@@ tmpbuf: %s, orgbuf(%d): %s",
+						tmpbuf, heapTuple->t_len, orgbuf)));
+
+				for (int j = 0; j < snapshot->xcnt; j++)
+				{
+					ereport(LOG, (errmsg("## snapshot[%d]: %d", j, snapshot->xip[j])));
+				}
+				}
+				}
+				else
+				{
+					ereport(LOG, (errmsg(
+							"@@ VCHAIN NOT FOUND (%d), org xmin: %d, xmax: %d",
+							primary_key, org_tuple_header->t_choice.t_heap.t_xmin,
+							org_tuple_header->t_choice.t_heap.t_xmax)));
+					ereport(LOG, (errmsg("@@ SNAPSHOT xmin: %d, xmax: %d",
+							snapshot->xmin, snapshot->xmax)));
+					ereport(LOG, (errmsg("HeapTupleHeaderXminCommitted: %d",
+							HeapTupleHeaderXminCommitted(org_tuple_header))));
+					ereport(LOG, (errmsg("HeapTupleHeaderXminFrozen: %d",
+							HeapTupleHeaderXminFrozen(org_tuple_header))));
+					ereport(LOG, (errmsg("XidInMVCCSnapshot(xmax): %d",
+							XidInMVCCSnapshot(
+							org_tuple_header->t_choice.t_heap.t_xmax, snapshot))));
+					ereport(LOG, (errmsg(
+							"tuple->t_infomask & HEAP_XMAX_INVALID: %d",
+							org_tuple_header->t_infomask & HEAP_XMAX_INVALID)));
+					ereport(LOG, (errmsg(
+							"HEAP_XMAX_IS_LOCKED_ONLY(tuple->t_infomask): %d",
+							HEAP_XMAX_IS_LOCKED_ONLY(org_tuple_header->t_infomask))));
+				}
+#endif
+			}
+			}
+#endif
+
+
 				return true;
 			}
 		}
@@ -2931,6 +3084,13 @@ heap_update(Relation relation, ItemPointer otid, HeapTuple newtup,
 				infomask2_old_tuple,
 				infomask_new_tuple,
 				infomask2_new_tuple;
+#ifndef HYU_LLT
+	TransactionId	xmin;
+	Datum			primary_key;
+	Bitmapset	   *bms_pk;
+	int				attnum_pk;
+	bool			is_null;
+#endif
 
 	Assert(ItemPointerIsValid(otid));
 
@@ -3711,7 +3871,62 @@ l2:
 		PageSetLSN(BufferGetPage(buffer), recptr);
 	}
 
-	END_CRIT_SECTION();
+#ifndef HYU_LLT
+	/* TODO: need to find the proper position for this code */
+	xmin = oldtup.t_data->t_choice.t_heap.t_xmin;
+
+	/* Get a bitmapset of the primary key of the tuple */
+	bms_pk = RelationGetIndexAttrBitmap(
+			relation, INDEX_ATTR_BITMAP_PRIMARY_KEY);
+
+	/*
+	 * At this time, we only support a relation having one primary key.
+	 * Some of background process could get into here with a bitmapset
+	 * with size 0, so we ignore that cases.
+	 */
+	if (bms_num_members(bms_pk) == 1)
+	{
+		/*
+		 * Need to add FirstLowInvalidHeapAttributeNumber to get the exact
+		 * attribute number of the primary key.
+		 * See the comment above RelationGetIndexAttrBitmap function.
+		 */
+		attnum_pk = bms_singleton_member(bms_pk) +
+				FirstLowInvalidHeapAttributeNumber;
+
+		/* Retrive the primary key from the old tuple */
+		primary_key = heap_getattr(
+				&oldtup, attnum_pk, relation->rd_att, &is_null);
+		
+		{
+		int r = random() % 100;
+		if (r < 80)
+			VClusterAppendTuple(VCLUSTER_HOT, primary_key, xmin,
+								oldtup.t_len, oldtup.t_data);
+		else if (r < 90)
+			VClusterAppendTuple(VCLUSTER_COLD, primary_key, xmin,
+								oldtup.t_len, oldtup.t_data);
+		else
+			VClusterAppendTuple(VCLUSTER_LLT, primary_key, xmin,
+								oldtup.t_len, oldtup.t_data);
+		}
+#if 0
+		{
+			char written[256];
+			memset(written, 0, 256);
+			memcpy(written, oldtup.t_data, oldtup.t_len);
+			for (int i = 0; i < 214; i++)
+			{
+				if (written[i] == 0) written[i] = ' ';
+			}
+			ereport(LOG, (errmsg("@@ Written Tuple(%d): %s", primary_key, written)));
+		}
+#endif
+	}
+#endif
+
+
+	END_CRIT_SECTION();	
 
 	if (newbuf != buffer)
 		LockBuffer(newbuf, BUFFER_LOCK_UNLOCK);
