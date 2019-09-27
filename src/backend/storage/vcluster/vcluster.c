@@ -14,7 +14,7 @@
  *
  *-------------------------------------------------------------------------
  */
-#ifndef HYU_LLT
+#ifdef HYU_LLT
 #include "postgres.h"
 
 #include <fcntl.h>
@@ -23,8 +23,10 @@
 #include "storage/lwlock.h"
 #include "storage/proc.h"
 #include "storage/shmem.h"
+
 #include "storage/vcache.h"
 #include "storage/vchain.h"
+#include "storage/thread_table.h"
 #include "storage/vcluster.h"
 
 /* vcluster descriptor in shared memory*/
@@ -55,8 +57,10 @@ VClusterShmemSize(void)
 {
 	Size		size = 0;
 
+	size = add_size(size, sizeof(VClusterDesc));
 	size = add_size(size, VCacheShmemSize());
 	size = add_size(size, VChainShmemSize());
+	size = add_size(size, ThreadTableShmemSize());
 
 	return size;
 }
@@ -73,6 +77,7 @@ VClusterShmemInit(void)
 
 	VCacheInit();
 	VChainInit();
+	ThreadTableInit();
 	
 	vclusters = (VClusterDesc *)
 		ShmemInitStruct("VCluster Descriptor",
@@ -255,8 +260,13 @@ retry:
 		seg_desc->locators[vidx].dsap_prev = 0;
 		seg_desc->locators[vidx].dsap_next = 0;
 
+		/* LLB TODO: update xmin & xmax of VSegmentDesc */
+		/* LLB TODO: Set epoch?? */
+
 		/* Append the locator into the version chain */
 		VChainAppendLocator(primary_key, &seg_desc->locators[vidx]);
+
+		/* LLB TODO: update isfull */
 	}
 	else if (alloc_seg_offset <= VCLUSTER_SEGSIZE &&
 			 alloc_seg_offset + aligned_tuple_size > VCLUSTER_SEGSIZE)

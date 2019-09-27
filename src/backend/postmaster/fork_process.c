@@ -61,7 +61,7 @@ fork_process(void)
 	result = fork();
 	if (result == 0)
 	{
-#ifndef HYU_LLT /* USEFUL BREAKPOINT */
+#ifdef HYU_LLT /* USEFUL BREAKPOINT */
 		//sleep(10);
 #endif
 		/* fork succeeded, in child */

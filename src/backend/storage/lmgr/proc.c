@@ -53,7 +53,7 @@
 #include "storage/procarray.h"
 #include "storage/procsignal.h"
 #include "storage/spin.h"
-#ifndef HYU_LLT
+#ifdef HYU_LLT
 #include "storage/vcluster.h"
 #endif
 #include "utils/timeout.h"
@@ -193,7 +193,7 @@ InitProcGlobal(void)
 	ProcGlobal->checkpointerLatch = NULL;
 	pg_atomic_init_u32(&ProcGlobal->procArrayGroupFirst, INVALID_PGPROCNO);
 	pg_atomic_init_u32(&ProcGlobal->clogGroupFirst, INVALID_PGPROCNO);
-#ifndef HYU_LLT
+#ifdef HYU_LLT
 	ProcGlobal->vcluster_dsa_handle = 0;
 #endif
 

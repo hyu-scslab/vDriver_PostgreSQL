@@ -440,7 +440,7 @@ InitializeLWLocks(void)
 	for (id = 0; id < NUM_BUFFER_PARTITIONS; id++, lock++)
 		LWLockInitialize(&lock->lock, LWTRANCHE_BUFFER_MAPPING);
 
-#ifndef HYU_LLT
+#ifdef HYU_LLT
 	/* Initialize vcache's LWLocks in main array */
 	lock = MainLWLockArray + NUM_INDIVIDUAL_LWLOCKS + NUM_BUFFER_PARTITIONS;
 	for (id = 0; id < NUM_VCACHE_PARTITIONS; id++, lock++)
@@ -532,7 +532,7 @@ RegisterLWLockTranches(void)
 		LWLockRegisterTranche(i, MainLWLockNames[i]);
 
 	LWLockRegisterTranche(LWTRANCHE_BUFFER_MAPPING, "buffer_mapping");
-#ifndef HYU_LLT
+#ifdef HYU_LLT
 	LWLockRegisterTranche(LWTRANCHE_VCACHE_MAPPING, "vcache_mapping");
 	LWLockRegisterTranche(LWTRANCHE_VCHAIN_MAPPING, "vchain_mapping");
 #endif

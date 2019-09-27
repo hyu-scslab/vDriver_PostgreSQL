@@ -573,7 +573,7 @@ PostmasterMain(int argc, char *argv[])
 	int			i;
 	char	   *output_config_variable = NULL;
 
-#ifndef HYU_LLT /* USEFUL BREAKPOINT */
+#ifdef HYU_LLT /* USEFUL BREAKPOINT */
 	//sleep(10);
 #endif
 

@@ -52,7 +52,7 @@
 #include "storage/sinvaladt.h"
 #include "storage/smgr.h"
 #include "storage/sync.h"
-#ifndef HYU_LLT
+#ifdef HYU_LLT
 #include "storage/vcluster.h"
 #endif
 #include "tcop/tcopprot.h"
@@ -564,7 +564,7 @@ BaseInit(void)
 	InitSync();
 	smgrinit();
 	InitBufferPoolAccess();
-#ifndef HYU_LLT
+#ifdef HYU_LLT
 	VClusterAttachDsa();
 #endif
 }

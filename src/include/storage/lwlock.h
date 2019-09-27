@@ -112,7 +112,7 @@ extern PGDLLIMPORT int NamedLWLockTrancheRequests;
 /* Number of partitions of the shared buffer mapping hashtable */
 #define NUM_BUFFER_PARTITIONS  128
 
-#ifndef HYU_LLT
+#ifdef HYU_LLT
 #define NUM_VCACHE_PARTITIONS  128
 #define NUM_VCHAIN_PARTITIONS  8192
 #endif
@@ -127,7 +127,7 @@ extern PGDLLIMPORT int NamedLWLockTrancheRequests;
 
 /* Offsets for various chunks of preallocated lwlocks. */
 #define BUFFER_MAPPING_LWLOCK_OFFSET	NUM_INDIVIDUAL_LWLOCKS
-#ifndef HYU_LLT
+#ifdef HYU_LLT
 #define VCACHE_MAPPING_LWLOCK_OFFSET		\
 	(BUFFER_MAPPING_LWLOCK_OFFSET + NUM_BUFFER_PARTITIONS)
 #define VCHAIN_MAPPING_LWLOCK_OFFSET		\
@@ -223,7 +223,7 @@ typedef enum BuiltinTrancheIds
 	LWTRANCHE_REPLICATION_SLOT_IO_IN_PROGRESS,
 	LWTRANCHE_PROC,
 	LWTRANCHE_BUFFER_MAPPING,
-#ifndef HYU_LLT
+#ifdef HYU_LLT
 	LWTRANCHE_VCACHE_MAPPING,
 	LWTRANCHE_VCHAIN_MAPPING,
 #endif
@@ -238,7 +238,7 @@ typedef enum BuiltinTrancheIds
 	LWTRANCHE_TBM,
 	LWTRANCHE_PARALLEL_APPEND,
 	LWTRANCHE_SXACT,
-#ifndef HYU_LLT
+#ifdef HYU_LLT
 	LWTRANCHE_VCLUSTER,
 #endif
 	LWTRANCHE_FIRST_USER_DEFINED

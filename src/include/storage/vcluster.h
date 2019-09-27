@@ -15,6 +15,8 @@
 #include "c.h"
 #include "utils/dsa.h"
 #include "utils/snapshot.h"
+#include "utils/snapmgr.h"
+#include "utils/dynahash.h"
 
 typedef enum {
 	VCLUSTER_HOT,
@@ -38,6 +40,14 @@ typedef uint32_t VSegmentPageId;
 
 typedef int64_t	PrimaryKey;
 
+/* Flag to decide winner or loser between transaction and cutter. */
+typedef enum
+{
+	VL_WINNER,			/* Winner's flag */
+	VL_APPEND,
+	VL_DELETE,
+} VLocatorFlag;
+
 typedef struct {
 	dsa_pointer			dsap;
 
@@ -45,9 +55,7 @@ typedef struct {
 	VSegmentId			seg_id;
 	VSegmentOffset		seg_offset;
 
-	/* Version chain pointer for a single tuple */
-	//struct VLocator		*prev;
-	//struct VLocator		*next;
+	VLocatorFlag		flag;
 
 	/*
 	 * Version chain pointer for a single tuple.

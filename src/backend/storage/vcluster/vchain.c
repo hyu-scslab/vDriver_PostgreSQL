@@ -13,13 +13,16 @@
  *
  *-------------------------------------------------------------------------
  */
-#ifndef HYU_LLT
+#ifdef HYU_LLT
 #include "postgres.h"
 
 #include "storage/lwlock.h"
 #include "storage/shmem.h"
 #include "storage/vchain.h"
 #include "storage/vchain_hash.h"
+#include "storage/thread_table.h"
+
+#include <assert.h>
 
 /*
  * VChainShmemSize
@@ -83,10 +86,17 @@ VChainLookupLocator(PrimaryKey primary_key,
 	}
 	LWLockRelease(partition_lock);
 
+	/* Set epoch */
+	SetTimestamp();
+
 	chain = (VLocator *)dsa_get_address(dsa_vcluster, dsap_chain);
 	if (chain->dsap_prev == chain->dsap)
 	{
 		/* There is a hash entry, but the version chain is empty */
+
+		/* Clear epoch */
+		ClearTimestamp();
+
 		return false;
 	}
 
@@ -102,11 +112,19 @@ VChainLookupLocator(PrimaryKey primary_key,
 		{
 			/* Found the visible version */
 			*ret_locator = locator;
+
+			/* Clear epoch */
+			ClearTimestamp();
+
 			return true;
 		}
 		locator = (VLocator *)dsa_get_address(
 				dsa_vcluster, locator->dsap_prev);
 	}
+	/* Fail to find a visible version */
+
+	/* Clear epoch */
+	ClearTimestamp();
 
 	return false;
 }
@@ -123,7 +141,9 @@ VChainAppendLocator(PrimaryKey primary_key, VLocator *locator)
 	uint32			hashcode;
 	dsa_pointer		dsap_chain;
 	VLocator		*chain;
-	VLocator		*pred;
+	dsa_pointer		dsap_tail_prev;
+	VLocator		*tail_prev;
+	VLocatorFlag	flag;
 
 	/* Get hash code for the primary key */
 	hashcode = VChainHashCode(&primary_key);
@@ -151,21 +171,56 @@ VChainAppendLocator(PrimaryKey primary_key, VLocator *locator)
 	 * Now we have the hash entry (dummy node) that indicates the
 	 * head/tail of the version chain.
 	 * Appending a new version node could compete with the cleaner.
-	 * TODO: follow the consensus protocol between transaction/cleaner.
 	 */
+
+	/* Set epoch */
+	SetTimestamp();
+
+retry:
 	chain = (VLocator *)dsa_get_address(dsa_vcluster, dsap_chain);
 
-	/* At this time, just naively implement appending a locator */
-	locator->dsap_prev = chain->dsap_prev;
-	locator->dsap_next = chain->dsap;
-	chain->dsap_prev = locator->dsap;
-	if (chain->dsap_next == chain->dsap) /* current chain is empty */
-		chain->dsap_next = locator->dsap;
-	else
-	{
-		pred = (VLocator *)dsa_get_address(dsa_vcluster, chain->dsap_next);
-		pred->dsap_next = locator->dsap;
+	/* Start the consensus protocol for transaction(inserter). */
+
+
+	/* 1) Get pointer of tail's prev. */
+	dsap_tail_prev = chain->dsap_prev;
+	tail_prev = (VLocator *)dsa_get_address(dsa_vcluster, dsap_tail_prev);
+
+	/* 2) Let's play fetch-and-add to decide winner or loser. */
+	flag = (VLocatorFlag) __sync_lock_test_and_set(&tail_prev->flag, VL_APPEND);
+	
+	if (flag == VL_DELETE) {
+		/* 3-2) I'm loser.. Spin until tail's prev is updated by cutter. */
+		while (dsap_tail_prev == __sync_fetch_and_add(&chain->dsap_prev, 0)) {
+			/* LLB TODO: Need to sleep a little?? */
+			;
+		}
+		
+		/* Retry until i'm winner */
+		goto retry;
 	}
+
+	/* 3-1) Yes, i'm winner! Insert the node in version chain. */
+	assert(flag == VL_WINNER);
+
+	locator->dsap_prev = dsap_tail_prev;
+	locator->dsap_next = chain->dsap;
+	tail_prev->dsap_next = locator->dsap;
+	chain->dsap_prev = locator->dsap;
+
+	/* 4) Ok.. Let's check whether cutter have visited. */
+	flag = (VLocatorFlag) __sync_lock_test_and_set(&tail_prev->flag, VL_WINNER);
+
+	if (flag == VL_DELETE) {
+		/* 5) Cutter have visited hear. Delete this node logically for cutter. */
+		/* LLB TODO: logical delete */
+		;
+	}
+
+	/* Clear epoch */
+	ClearTimestamp();
+
+	/* End the consensus protocol. */
 }
 
 #endif /* HYU_LLT */

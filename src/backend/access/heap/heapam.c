@@ -62,7 +62,7 @@
 #include "storage/smgr.h"
 #include "storage/spin.h"
 #include "storage/standby.h"
-#ifndef HYU_LLT
+#ifdef HYU_LLT
 #include "storage/vcluster.h"
 #endif
 #include "utils/datum.h"
@@ -1537,7 +1537,7 @@ heap_hot_search_buffer(ItemPointer tid, Relation relation, Buffer buffer,
 	bool		at_chain_start;
 	bool		valid;
 	bool		skip;
-#ifndef HYU_LLT
+#ifdef HYU_LLT
 	Datum			primary_key;
 	Bitmapset	   *bms_pk;
 	int				attnum_pk;
@@ -1632,7 +1632,7 @@ heap_hot_search_buffer(ItemPointer tid, Relation relation, Buffer buffer,
 				if (all_dead)
 					*all_dead = false;
 
-#ifndef HYU_LLT
+#ifdef HYU_LLT
 			/*
 			 * We just checked the visibility above and found the tuple, so
 			 * try to find the visible version in the chain again and compare.
@@ -3084,7 +3084,7 @@ heap_update(Relation relation, ItemPointer otid, HeapTuple newtup,
 				infomask2_old_tuple,
 				infomask_new_tuple,
 				infomask2_new_tuple;
-#ifndef HYU_LLT
+#ifdef HYU_LLT
 	TransactionId	xmin;
 	Datum			primary_key;
 	Bitmapset	   *bms_pk;
@@ -3871,7 +3871,7 @@ l2:
 		PageSetLSN(BufferGetPage(buffer), recptr);
 	}
 
-#ifndef HYU_LLT
+#ifdef HYU_LLT
 	/* TODO: need to find the proper position for this code */
 	xmin = oldtup.t_data->t_choice.t_heap.t_xmin;
 

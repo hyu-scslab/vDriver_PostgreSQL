@@ -1612,7 +1612,7 @@ ExecutePlan(EState *estate,
 	TupleTableSlot *slot;
 	uint64		current_tuple_count;
 
-#ifndef HYU_LLT /* USEFUL BREAKPOINT */
+#ifdef HYU_LLT /* USEFUL BREAKPOINT */
 #endif
 
 	/*
