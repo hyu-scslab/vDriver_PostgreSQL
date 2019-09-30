@@ -49,7 +49,7 @@ ThreadTableShmemSize(void)
 /*
  * ThreadTableInit
  *
- * Initialize shared data structures related to vcluster in shared memory
+ * Initialize shared data structures related to thread table in shared memory
  */
 void
 ThreadTableInit(void)
@@ -84,7 +84,6 @@ SetTimestamp(void)
 	thread_table[index].timestamp = GetCurrentTimestamp();
 }
 
-
 /*
  * ClearTimestamp
  *
@@ -99,4 +98,31 @@ ClearTimestamp(void)
 	thread_table[index].timestamp = TS_NONE;
 }
 
+/*
+ * GetMinimumTimestamp
+ *
+ * Return the minimum timestamp from thread table.
+ * If timestamp of a object is smaller than GetMinimumTimestamp(), 
+ * we can be sure that any other processes can't see the object.
+ */
+TimestampTz
+GetMinimumTimestamp(void)
+{
+	TimestampTz min_ts;
+
+	min_ts = GetCurrentTimestamp();
+	for (int i = 0; i < THREAD_TABLE_SIZE; i++)
+	{
+		TimestampTz ts;
+		ts = thread_table_desc->thread_table[i].timestamp;
+
+		if (ts == TS_NONE)
+			continue;
+
+		if (ts < min_ts)
+			min_ts = ts;
+	}
+
+	return min_ts;
+}
 #endif /* HYU_LLT */

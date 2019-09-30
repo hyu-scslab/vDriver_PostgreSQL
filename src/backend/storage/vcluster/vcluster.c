@@ -22,11 +22,19 @@
 
 #include "storage/lwlock.h"
 #include "storage/proc.h"
+#include "postmaster/fork_process.h"
 #include "storage/shmem.h"
+#include "miscadmin.h"
+#include "postmaster/postmaster.h"
+#include "tcop/tcopprot.h"
+#include "storage/ipc.h"
+#include "storage/sinvaladt.h"
+#include "libpq/pqsignal.h"
 
 #include "storage/vcache.h"
 #include "storage/vchain.h"
 #include "storage/thread_table.h"
+#include "storage/dead_zone.h"
 #include "storage/vcluster.h"
 
 /* vcluster descriptor in shared memory*/
@@ -46,6 +54,7 @@ static dsa_pointer AllocNewSegmentInternal(dsa_area *dsa,
 										   VCLUSTER_TYPE type);
 static dsa_pointer AllocNewSegment(VCLUSTER_TYPE type);
 static void PrepareSegmentFile(VSegmentId seg_id);
+static void VClusterCutProcessMain(void);
 
 /*
  * VClusterShmemSize
@@ -61,6 +70,7 @@ VClusterShmemSize(void)
 	size = add_size(size, VCacheShmemSize());
 	size = add_size(size, VChainShmemSize());
 	size = add_size(size, ThreadTableShmemSize());
+	size = add_size(size, DeadZoneShmemSize());
 
 	return size;
 }
@@ -78,6 +88,7 @@ VClusterShmemInit(void)
 	VCacheInit();
 	VChainInit();
 	ThreadTableInit();
+	DeadZoneInit();
 	
 	vclusters = (VClusterDesc *)
 		ShmemInitStruct("VCluster Descriptor",
@@ -90,6 +101,33 @@ VClusterShmemInit(void)
 	}
 	pg_atomic_init_u32(&vclusters->next_seg_id, VCLUSTER_NUM + 1);
 }
+
+/*
+ * VCutterStart
+ *
+ * Fork vcutter process.
+ */
+pid_t
+StartVCutter(void)
+{
+	pid_t		cutter_pid;
+
+	/* Start a cutter process. */
+	cutter_pid = fork_process();
+	if (cutter_pid == -1) {
+		/* error */
+	}
+	else if (cutter_pid == 0) {
+		/* child */
+		VClusterCutProcessMain(); /* no return */
+	}
+	else {
+		/* parent */
+	}
+
+	return cutter_pid;
+}
+
 
 /*
  * VClusterDsaInit
@@ -113,9 +151,27 @@ VClusterDsaInit(void)
 	 * for each vcluster.
 	 * assign segment id 0, 1, 2 for HOT, COLD, LLT segment, respectively.
 	 */
+	/* FIXME: need to devide code between dsa init and initiate variables. */
 	for (int i = 0; i < VCLUSTER_NUM; i++)
 	{
-		vclusters->head[i] = AllocNewSegmentInternal(dsa, i);
+		dsa_pointer		dsap_seg_desc;
+		VSegmentDesc*	seg_desc;
+
+		/* First available segment */
+		vclusters->tail[i] = AllocNewSegmentInternal(dsa, i);
+		vclusters->head[i] = vclusters->tail[i];
+
+		/* A dummy node for garbage list. */
+		/* Allocate a new segment descriptor in shared memory */
+		dsap_seg_desc = dsa_allocate_extended(
+				dsa, sizeof(VSegmentDesc), DSA_ALLOC_ZERO);
+		seg_desc = (VSegmentDesc *)dsa_get_address(dsa, dsap_seg_desc);
+
+		/* dummy node need only one variable "next". */
+		seg_desc->next = 0;
+
+		vclusters->garbage_list_head[i] = dsap_seg_desc;
+		vclusters->garbage_list_tail[i] = dsap_seg_desc;
 	}
 
 	dsa_detach(dsa);
@@ -187,13 +243,13 @@ void
 VClusterAppendTuple(VCLUSTER_TYPE cluster_type,
 					PrimaryKey primary_key,
 					TransactionId xmin,
+					TransactionId xmax,
 					Size tuple_size,
 					const void *tuple)
 {
 	VSegmentDesc 	*seg_desc;
 	int				alloc_seg_offset;
 	dsa_pointer		dsap_new_seg;
-	VSegmentDesc	*new_seg_desc;
 	VSegmentId		reserved_seg_id;
 	int				vidx;
 
@@ -212,6 +268,10 @@ VClusterAppendTuple(VCLUSTER_TYPE cluster_type,
 	aligned_tuple_size = 1 << my_log2(tuple_size);
 
 retry:
+
+	/* Set epoch */
+	SetTimestamp();
+
 	/*
 	 * The order of reading the segment id and the reserved segment id
 	 * is important for making happen-before relation.
@@ -219,7 +279,7 @@ retry:
 	 * the reserved segment id could be same.
 	 */
 	seg_desc = (VSegmentDesc *)dsa_get_address(
-			dsa_vcluster, vclusters->head[cluster_type]);
+			dsa_vcluster, vclusters->tail[cluster_type]);
 	pg_memory_barrier();
 	reserved_seg_id = vclusters->reserved_seg_id[cluster_type];
 	
@@ -255,18 +315,39 @@ retry:
 		/* Set vlocator of the version tuple */
 		vidx = alloc_seg_offset / aligned_tuple_size;
 		seg_desc->locators[vidx].xmin = xmin;
+		seg_desc->locators[vidx].xmax = xmax;
 		seg_desc->locators[vidx].seg_id = seg_desc->seg_id;
 		seg_desc->locators[vidx].seg_offset = alloc_seg_offset;
 		seg_desc->locators[vidx].dsap_prev = 0;
 		seg_desc->locators[vidx].dsap_next = 0;
 
-		/* LLB TODO: update xmin & xmax of VSegmentDesc */
-		/* LLB TODO: Set epoch?? */
-
 		/* Append the locator into the version chain */
 		VChainAppendLocator(primary_key, &seg_desc->locators[vidx]);
 
-		/* LLB TODO: update isfull */
+		if (VCLUSTER_SEG_NUM_ENTRY ==
+				__sync_add_and_fetch(&seg_desc->counter, 1)) {
+			/* You are last one which is inserting in this seg desc.
+			 * So, update xmin and xmax. */
+			TransactionId xmin = PG_UINT32_MAX;
+			TransactionId xmax = 0;
+			for (int i = 0; i < VCLUSTER_SEG_NUM_ENTRY; i++)
+			{
+				VLocator* vlocator = &seg_desc->locators[i];
+
+				if (vlocator->xmin < xmin) {
+					xmin = vlocator->xmin;
+				}
+				if (vlocator->xmax > xmax) {
+					xmax = vlocator->xmax;
+				}
+			}
+			seg_desc->xmin = xmin;
+			/* Cutter may decide by xmax whether xmin/xmax of
+			 * this segment desc is updated or not.
+			 * So xmax must be updated after xmin. */
+			pg_memory_barrier();
+			seg_desc->xmax = xmax;
+		}
 	}
 	else if (alloc_seg_offset <= VCLUSTER_SEGSIZE &&
 			 alloc_seg_offset + aligned_tuple_size > VCLUSTER_SEGSIZE)
@@ -277,12 +358,14 @@ retry:
 		 * a new segment concurrently, need to add some arbitration code */
 		dsap_new_seg = AllocNewSegment(cluster_type);
 
-		/* Segment descriptor chain remains new to old */
-		new_seg_desc =
-				(VSegmentDesc *)dsa_get_address(dsa_vcluster, dsap_new_seg);
-		new_seg_desc->next = vclusters->head[cluster_type];
-		vclusters->head[cluster_type] = dsap_new_seg;
+		/* Segment descriptor chain remains old to new */
+		seg_desc->next = dsap_new_seg;
 		pg_memory_barrier();
+		vclusters->tail[cluster_type] = dsap_new_seg;
+		pg_memory_barrier();
+
+		/* Clear epoch */
+		ClearTimestamp();
 		goto retry;
 	}
 	else
@@ -294,6 +377,9 @@ retry:
 		pg_usleep(1000L);
 		goto retry;
 	}
+
+	/* Clear epoch */
+	ClearTimestamp();
 }
 
 /*
@@ -326,6 +412,8 @@ AllocNewSegmentInternal(dsa_area *dsa, VCLUSTER_TYPE cluster_type)
 	seg_desc->xmin = 0;
 	seg_desc->xmax = 0;
 	seg_desc->next = 0;
+	seg_desc->timestamp = TS_NONE;
+	seg_desc->counter = 0;
 	pg_atomic_init_u32(&seg_desc->seg_offset, 0);
 
 	/* Initialize the all vlocators in the segment index */
@@ -377,5 +465,173 @@ static void PrepareSegmentFile(VSegmentId seg_id)
 
 	seg_fds[seg_id] = fd;
 }
+
+/*
+ * CutSegment
+ *
+ * Cut a segment of victim(vseg desc) and fix-up all.
+ */
+static void
+CutSegment(VSegmentDesc* victim)
+{
+	for (int i = 0; i < VCLUSTER_SEG_NUM_ENTRY; i++) {
+		VLocator*		vlocator;
+		VLocatorFlag	flag;
+
+		/* Start the consensus protocol for transaction(inserter). */
+
+		/* 1) Get vlocator for cut. */
+		vlocator = &victim->locators[i];
+
+		/* 2) Let's play fetch-and-add to decide winner or loser. */
+		flag = (VLocatorFlag) __sync_lock_test_and_set(&vlocator->flag, VL_DELETE);
+
+		if (flag == VL_WINNER) {
+			/* 3-1) Yes, i'm winner! Let's delete it(fix-up). */
+			VChainFixUpOne(vlocator);
+		}
+
+		/* 3-2) Loser has not to do anything. */
+
+		/* End the consensus protocol. */
+	}
+}
+
+/*
+ * CutVSegDesc
+ *
+ * Find cuttable vseg desc from vseg desc list and cut it.
+ */
+static void
+CutVSegDesc(VCLUSTER_TYPE cluster_type)
+{
+	dsa_pointer		dsap_victim = 0;
+	dsa_pointer		dsap_victim_prev = 0;
+	VSegmentDesc*	victim = NULL;
+	VSegmentDesc*	victim_prev = NULL;
+	dsa_pointer		dsap_old_tail;
+	VSegmentDesc*	old_tail;
+
+start_from_head:
+	/* Find cuttable segment des */
+	dsap_victim = vclusters->head[cluster_type];
+	victim = (VSegmentDesc *)dsa_get_address(
+			dsa_vcluster, dsap_victim);
+
+	for (;;) {
+		if (victim->next == 0) {
+			/* It is tail where new versions are inserted. */
+			goto end;
+		}
+		
+		if (victim->xmax == 0) {
+			/* xmin/xmax is not updated yet. */
+			/* We assume that updated xmax value never be 0. */
+			goto next;
+		}
+
+		if (!IsInDeadZone(victim->xmin, victim->xmax)) {
+			/* It is not dead. */
+			goto next;
+		}
+
+		elog(WARNING, "HYU_LLT : cut %u %u", victim->xmin, victim->xmax);
+		/* We can cut this segment. */
+		CutSegment(victim);
+
+		/* Detach it from vseg desc list. */
+		if (dsap_victim_prev == 0) {
+			/* Change the head because victim is head. */
+			vclusters->head[cluster_type] = victim->next;
+		}
+		else {
+			/* link prev to next. */
+			victim_prev->next = victim->next;
+		}
+
+		/* Link it to the garbage list. */
+		victim->next = 0;
+		pg_memory_barrier();
+
+		/* We assume that cutter process is only one. */
+		/* First, update tail. */
+		dsap_old_tail = vclusters->garbage_list_tail[cluster_type];
+		old_tail = (VSegmentDesc *)dsa_get_address(
+			dsa_vcluster, dsap_old_tail);
+		vclusters->garbage_list_tail[cluster_type] = dsap_victim;
+		pg_memory_barrier();
+
+		/* Second, update next of old tail to victim. */
+		old_tail->next = dsap_victim;
+
+		/* OK. Set timestamp. Any vCutter and vSorter
+		 * after this timestamp never see this victim node. */
+		victim->timestamp = GetCurrentTimestamp();
+
+		if (dsap_victim_prev == 0) {
+			/* Old head is deleted, so let's start from new head. */
+			goto start_from_head;
+		}
+
+		/* Victim is deleted, so prev pointer is fix. */
+		victim = victim_prev;
+		dsap_victim = dsap_victim_prev;
+
+next:
+		/* Move to next node. */
+		dsap_victim_prev = dsap_victim;
+		victim_prev = victim;
+		dsap_victim = victim->next;
+		victim = (VSegmentDesc *)dsa_get_address(
+				dsa_vcluster, dsap_victim);
+	}
+
+end:
+	return;
+}
+
+/*
+ * my_quick_die
+ *
+ * Callback function for process signal.
+ * We manage only exit signal.
+ */
+void
+my_quick_die(SIGNAL_ARGS)
+{
+	HOLD_INTERRUPTS();
+	proc_exit(1);
+}
+
+/*
+ * VClusterCutProcessMain
+ *
+ * Main function of vCutter process.
+ */
+static void
+VClusterCutProcessMain(void)
+{
+	/* just copy routine to hear from other process-generation-code */
+	/* ex) StartAutoVacLauncher */
+	InitPostmasterChild();
+	ClosePostmasterPorts(false);
+	SetProcessingMode(InitProcessing);
+	pqsignal(SIGQUIT, my_quick_die);
+	pqsignal(SIGTERM, my_quick_die);
+	pqsignal(SIGKILL, my_quick_die);
+	pqsignal(SIGINT, my_quick_die);
+	PG_SETMASK(&UnBlockSig);
+	BaseInit();
+	InitProcess();
+
+	for (;;) {
+		elog(WARNING, "HYU_LLT : cutter looping..");
+		for (VCLUSTER_TYPE type = 0; type < VCLUSTER_NUM; type++) {
+			CutVSegDesc(type);
+		}
+		sleep(1);
+	}
+}
+
 
 #endif /* HYU_LLT */

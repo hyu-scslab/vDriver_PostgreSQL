@@ -18,9 +18,10 @@
 
 #include "storage/lwlock.h"
 #include "storage/shmem.h"
-#include "storage/vchain.h"
 #include "storage/vchain_hash.h"
 #include "storage/thread_table.h"
+
+#include "storage/vchain.h"
 
 #include <assert.h>
 
@@ -173,14 +174,10 @@ VChainAppendLocator(PrimaryKey primary_key, VLocator *locator)
 	 * Appending a new version node could compete with the cleaner.
 	 */
 
-	/* Set epoch */
-	SetTimestamp();
-
 retry:
 	chain = (VLocator *)dsa_get_address(dsa_vcluster, dsap_chain);
 
 	/* Start the consensus protocol for transaction(inserter). */
-
 
 	/* 1) Get pointer of tail's prev. */
 	dsap_tail_prev = chain->dsap_prev;
@@ -213,14 +210,42 @@ retry:
 
 	if (flag == VL_DELETE) {
 		/* 5) Cutter have visited hear. Delete this node logically for cutter. */
-		/* LLB TODO: logical delete */
-		;
+		VChainFixUpOne(tail_prev);
 	}
 
-	/* Clear epoch */
-	ClearTimestamp();
-
 	/* End the consensus protocol. */
+}
+
+/*
+ * VChainFixUpOne
+ *
+ * Fix-up a vlocator.
+ * Link between prev and next of one, and delete logically.
+ */
+void
+VChainFixUpOne(VLocator* mid)
+{
+	dsa_pointer dsap_prev;
+	dsa_pointer dsap_next;
+	
+	VLocator* prev;
+	VLocator* next;
+
+	dsap_prev = mid->dsap_prev;
+	dsap_next = mid->dsap_next;
+
+	prev = (VLocator *)dsa_get_address(dsa_vcluster, dsap_prev);
+	next = (VLocator *)dsa_get_address(dsa_vcluster, dsap_next);
+
+	/* fix up */
+	prev->dsap_next = dsap_next;
+	next->dsap_prev = dsap_prev;
+
+	/* memory barrier for timestamp */
+	pg_memory_barrier();
+
+	/* Set timestamp */
+	mid->timestamp = GetCurrentTimestamp();
 }
 
 #endif /* HYU_LLT */

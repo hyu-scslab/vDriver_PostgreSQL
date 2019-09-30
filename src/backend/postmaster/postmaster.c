@@ -131,6 +131,10 @@
 #include "utils/timeout.h"
 #include "utils/timestamp.h"
 #include "utils/varlena.h"
+#ifdef HYU_LLT
+#include "storage/vcluster.h"
+#include "storage/dead_zone.h"
+#endif
 
 #ifdef EXEC_BACKEND
 #include "storage/spin.h"
@@ -253,6 +257,10 @@ static pid_t StartupPID = 0,
 			WalWriterPID = 0,
 			WalReceiverPID = 0,
 			AutoVacPID = 0,
+#ifdef HYU_LLT
+			VCutterPID = 0,
+			DeadZoneUpdaterPID = 0,
+#endif
 			PgArchPID = 0,
 			PgStatPID = 0,
 			SysLoggerPID = 0;
@@ -1285,6 +1293,10 @@ PostmasterMain(int argc, char *argv[])
 	 * If enabled, start up syslogger collection subprocess
 	 */
 	SysLoggerPID = SysLogger_Start();
+#ifdef HYU_LLT
+	VCutterPID = StartVCutter();
+	DeadZoneUpdaterPID = StartDeadZoneUpdater();
+#endif
 
 	/*
 	 * Reset whereToSendOutput from DestDebug (its starting state) to
@@ -2742,6 +2754,12 @@ pmdie(SIGNAL_ARGS)
 				/* and the walwriter too */
 				if (WalWriterPID != 0)
 					signal_child(WalWriterPID, SIGTERM);
+#ifdef HYU_LLT
+				if (VCutterPID != 0)
+					signal_child(VCutterPID, SIGTERM);
+				if (DeadZoneUpdaterPID != 0)
+					signal_child(DeadZoneUpdaterPID, SIGTERM);
+#endif
 
 				/*
 				 * If we're in recovery, we can't kill the startup process
@@ -2790,6 +2808,12 @@ pmdie(SIGNAL_ARGS)
 				signal_child(BgWriterPID, SIGTERM);
 			if (WalReceiverPID != 0)
 				signal_child(WalReceiverPID, SIGTERM);
+#ifdef HYU_LLT
+			if (VCutterPID != 0)
+				signal_child(VCutterPID, SIGTERM);
+			if (DeadZoneUpdaterPID != 0)
+				signal_child(DeadZoneUpdaterPID, SIGTERM);
+#endif
 			if (pmState == PM_STARTUP || pmState == PM_RECOVERY)
 			{
 				SignalSomeChildren(SIGTERM, BACKEND_TYPE_BGWORKER);
@@ -4045,6 +4069,12 @@ TerminateChildren(int signal)
 		signal_child(PgArchPID, signal);
 	if (PgStatPID != 0)
 		signal_child(PgStatPID, signal);
+#ifdef HYU_LLT
+	if (VCutterPID != 0)
+		signal_child(VCutterPID, signal);
+	if (DeadZoneUpdaterPID != 0)
+		signal_child(DeadZoneUpdaterPID, signal);
+#endif
 }
 
 /*

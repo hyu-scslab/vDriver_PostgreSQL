@@ -51,6 +51,7 @@ extern Size ThreadTableShmemSize(void);
 extern void ThreadTableInit(void);
 extern void SetTimestamp(void);
 extern void ClearTimestamp(void);
+extern TimestampTz GetMinimumTimestamp(void);
 
 
 #endif							/* THREAD_TABLE_H */

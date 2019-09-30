@@ -20,7 +20,8 @@ extern void VChainInit(void);
 extern bool VChainLookupLocator(PrimaryKey primary_key,
 								Snapshot snapshot,
 								VLocator **ret_locator);
-
-extern void VChainAppendLocator(PrimaryKey primary_key, VLocator *locator);
+extern void VChainAppendLocator(PrimaryKey primary_key,
+								VLocator *locator);
+extern void VChainFixUpOne(VLocator* mid);
 
 #endif							/* VCHAIN_H */

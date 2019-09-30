@@ -3086,6 +3086,7 @@ heap_update(Relation relation, ItemPointer otid, HeapTuple newtup,
 				infomask2_new_tuple;
 #ifdef HYU_LLT
 	TransactionId	xmin;
+	TransactionId	xmax;
 	Datum			primary_key;
 	Bitmapset	   *bms_pk;
 	int				attnum_pk;
@@ -3874,6 +3875,7 @@ l2:
 #ifdef HYU_LLT
 	/* TODO: need to find the proper position for this code */
 	xmin = oldtup.t_data->t_choice.t_heap.t_xmin;
+	xmax = oldtup.t_data->t_choice.t_heap.t_xmax;
 
 	/* Get a bitmapset of the primary key of the tuple */
 	bms_pk = RelationGetIndexAttrBitmap(
@@ -3901,13 +3903,13 @@ l2:
 		{
 		int r = random() % 100;
 		if (r < 80)
-			VClusterAppendTuple(VCLUSTER_HOT, primary_key, xmin,
+			VClusterAppendTuple(VCLUSTER_HOT, primary_key, xmin, xmax,
 								oldtup.t_len, oldtup.t_data);
 		else if (r < 90)
-			VClusterAppendTuple(VCLUSTER_COLD, primary_key, xmin,
+			VClusterAppendTuple(VCLUSTER_COLD, primary_key, xmin, xmax,
 								oldtup.t_len, oldtup.t_data);
 		else
-			VClusterAppendTuple(VCLUSTER_LLT, primary_key, xmin,
+			VClusterAppendTuple(VCLUSTER_LLT, primary_key, xmin, xmax,
 								oldtup.t_len, oldtup.t_data);
 		}
 #if 0
