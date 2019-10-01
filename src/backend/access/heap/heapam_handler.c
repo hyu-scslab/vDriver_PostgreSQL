@@ -43,6 +43,9 @@
 #include "storage/predicate.h"
 #include "storage/procarray.h"
 #include "storage/smgr.h"
+#ifndef HYU_LLT
+#include "storage/vcache.h"
+#endif
 #include "utils/builtins.h"
 #include "utils/rel.h"
 
@@ -84,6 +87,9 @@ heapam_index_fetch_begin(Relation rel)
 
 	hscan->xs_base.rel = rel;
 	hscan->xs_cbuf = InvalidBuffer;
+#ifndef HYU_LLT
+	hscan->xs_vcache = InvalidVCache;
+#endif
 
 	return &hscan->xs_base;
 }
@@ -98,6 +104,13 @@ heapam_index_fetch_reset(IndexFetchTableData *scan)
 		ReleaseBuffer(hscan->xs_cbuf);
 		hscan->xs_cbuf = InvalidBuffer;
 	}
+#ifndef HYU_LLT
+	if (VCacheIsValid(hscan->xs_vcache))
+	{
+		VCacheUnref(hscan->xs_vcache);
+		hscan->xs_vcache = InvalidVCache;
+	}
+#endif
 }
 
 static void
@@ -132,12 +145,24 @@ heapam_index_fetch_tuple(struct IndexFetchTableData *scan,
 		hscan->xs_cbuf = ReleaseAndReadBuffer(hscan->xs_cbuf,
 											  hscan->xs_base.rel,
 											  ItemPointerGetBlockNumber(tid));
+#ifndef HYU_LLT
+		if (VCacheIsValid(hscan->xs_vcache))
+		{
+			VCacheUnref(hscan->xs_vcache);
+			hscan->xs_vcache = InvalidVCache;
+		}
 
+#endif
 		/*
 		 * Prune page, but only if we weren't already on this page
 		 */
+#ifndef HYU_LLT /* Removed original pruning */
+//		if (prev_buf != hscan->xs_cbuf)
+//			heap_page_prune_opt(hscan->xs_base.rel, hscan->xs_cbuf);
+#else
 		if (prev_buf != hscan->xs_cbuf)
 			heap_page_prune_opt(hscan->xs_base.rel, hscan->xs_cbuf);
+#endif
 	}
 
 	/* Obtain share-lock on the buffer so we can examine visibility */
@@ -2106,7 +2131,11 @@ heapam_scan_bitmap_next_block(TableScanDesc scan,
 	/*
 	 * Prune and repair fragmentation for the whole page, if possible.
 	 */
+#ifndef HYU_LLT /* Removed original pruning */
+	//heap_page_prune_opt(scan->rs_rd, buffer);
+#else
 	heap_page_prune_opt(scan->rs_rd, buffer);
+#endif
 
 	/*
 	 * We must hold share lock on the buffer content while examining tuple

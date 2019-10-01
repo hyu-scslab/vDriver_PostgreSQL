@@ -67,6 +67,7 @@ typedef struct VCacheMeta
 } VCacheMeta;
 
 #define GetVCacheDescriptor(id) (&VCacheDescriptors[(id)].vcachedesc)
+#define InvalidVCache			(INT_MAX)
 
 /* in globals.c ... this duplicates miscadmin.h */
 extern PGDLLIMPORT int NVCache;
@@ -79,11 +80,16 @@ extern void VCacheAppendTuple(VSegmentId seg_id,
 							  VSegmentOffset seg_offset,
 				  			  Size tuple_size,
 				  			  const void *tuple);
-
+extern int VCacheReadTupleRef(VSegmentId seg_id,
+							   VSegmentOffset seg_offset,
+							   void **ret_tuple);
 extern void VCacheReadTuple(VSegmentId seg_id,
 							VSegmentOffset seg_offset,
 							Size tuple_size,
 							void *ret_tuple);
 
+
+extern bool VCacheIsValid(int cache_id);
+void VCacheUnref(int cache_id);
 
 #endif							/* VCACHE_H */

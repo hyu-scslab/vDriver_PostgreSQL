@@ -146,8 +146,9 @@ VClusterDetachDsa(void)
 	dsa_vcluster = NULL;
 }
 
+#if 0
 /*
- * VClusterReadTuple
+ * VClusterLookupTuple
  *
  * Find a visible version tuple with given primary key and snapshot.
  * Returns true if found. Returns false if not found.
@@ -172,7 +173,34 @@ VClusterLookupTuple(PrimaryKey primary_key,
 	
 	return true;
 }
+#endif
+/*
+ * VClusterLookupTuple
+ *
+ * Find a visible version tuple with given primary key and snapshot.
+ * Set ret_tuple to the pointer of the tuple in the vcache entry, and
+ * return the pinned vcache id. Caller should unpin the cache after using.
+ * Return InvalidVCache if not found.
+ */
+int
+VClusterLookupTuple(PrimaryKey primary_key,
+					Snapshot snapshot,
+					void **ret_tuple)
+{
+	VLocator *locator;
+	int cache_id;
 
+	if (!VChainLookupLocator(primary_key, snapshot, &locator))
+	{
+		/* Couldn't find the visible locator for the primary key */
+		return InvalidVCache;
+	}
+
+	cache_id = VCacheReadTupleRef(locator->seg_id,
+								  locator->seg_offset,
+								  ret_tuple);
+	return cache_id;
+}
 /*
  * VClusterAppendTuple
  *

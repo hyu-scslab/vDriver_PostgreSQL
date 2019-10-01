@@ -64,6 +64,7 @@
 #include "storage/standby.h"
 #ifndef HYU_LLT
 #include "storage/vcluster.h"
+#include "storage/vcache.h"
 #endif
 #include "utils/datum.h"
 #include "utils/inval.h"
@@ -394,7 +395,11 @@ heapgetpage(TableScanDesc sscan, BlockNumber page)
 	/*
 	 * Prune and repair fragmentation for the whole page, if possible.
 	 */
+#ifndef HYU_LLT /* Removed original pruning */
+	//heap_page_prune_opt(scan->rs_base.rs_rd, buffer);
+#else
 	heap_page_prune_opt(scan->rs_base.rs_rd, buffer);
+#endif
 
 	/*
 	 * We must hold share lock on the buffer content while examining tuple
@@ -1504,6 +1509,7 @@ heap_fetch(Relation relation,
 	return false;
 }
 
+#ifndef HYU_LLT
 /*
  *	heap_hot_search_buffer	- search HOT chain for tuple satisfying snapshot
  *
@@ -1529,6 +1535,7 @@ bool
 heap_hot_search_buffer(ItemPointer tid, Relation relation, Buffer buffer,
 					   Snapshot snapshot, HeapTuple heapTuple,
 					   bool *all_dead, bool first_call)
+					   //bool *all_dead, bool first_call, bool for_update)
 {
 	Page		dp = (Page) BufferGetPage(buffer);
 	TransactionId prev_xmax = InvalidTransactionId;
@@ -1674,8 +1681,26 @@ heap_hot_search_buffer(ItemPointer tid, Relation relation, Buffer buffer,
 				memset(tmpbuf, 0, 256);
 
 				/* Find the old version from the vcluster */
+				{
+					HeapTupleHeader tmp_heap_tuple;
+					int cache_id;
+					static int t = 0;
+					if (t == 0)
+					{
+						//sleep(10);
+						t = 1;
+					}
+					cache_id = VClusterLookupTuple(
+							primary_key, snapshot, &tmp_heap_tuple);
+					if (VCacheIsValid(cache_id))
+					{
+						VCacheUnref(cache_id);
+					}
+				}
+#if 0
 				VClusterLookupTuple(primary_key, heapTuple->t_len,
 									snapshot, tmpbuf);
+#endif
 #if 0 // Lookup and verify
 				if (VClusterLookupTuple(primary_key, heapTuple->t_len,
 										snapshot, tmpbuf))
@@ -1807,6 +1832,163 @@ heap_hot_search_buffer(ItemPointer tid, Relation relation, Buffer buffer,
 
 	return false;
 }
+
+#else
+/*
+ *	heap_hot_search_buffer	- search HOT chain for tuple satisfying snapshot
+ *
+ * On entry, *tid is the TID of a tuple (either a simple tuple, or the root
+ * of a HOT chain), and buffer is the buffer holding this tuple.  We search
+ * for the first chain member satisfying the given snapshot.  If one is
+ * found, we update *tid to reference that tuple's offset number, and
+ * return true.  If no match, return false without modifying *tid.
+ *
+ * heapTuple is a caller-supplied buffer.  When a match is found, we return
+ * the tuple here, in addition to updating *tid.  If no match is found, the
+ * contents of this buffer on return are undefined.
+ *
+ * If all_dead is not NULL, we check non-visible tuples to see if they are
+ * globally dead; *all_dead is set true if all members of the HOT chain
+ * are vacuumable, false if not.
+ *
+ * Unlike heap_fetch, the caller must already have pin and (at least) share
+ * lock on the buffer; it is still pinned/locked at exit.  Also unlike
+ * heap_fetch, we do not report any pgstats count; caller may do so if wanted.
+ */
+bool
+heap_hot_search_buffer(ItemPointer tid, Relation relation, Buffer buffer,
+					   Snapshot snapshot, HeapTuple heapTuple,
+					   bool *all_dead, bool first_call)
+{
+	Page		dp = (Page) BufferGetPage(buffer);
+	TransactionId prev_xmax = InvalidTransactionId;
+	BlockNumber blkno;
+	OffsetNumber offnum;
+	bool		at_chain_start;
+	bool		valid;
+	bool		skip;
+
+	/* If this is not the first call, previous call returned a (live!) tuple */
+	if (all_dead)
+		*all_dead = first_call;
+
+	blkno = ItemPointerGetBlockNumber(tid);
+	offnum = ItemPointerGetOffsetNumber(tid);
+	at_chain_start = first_call;
+	skip = !first_call;
+
+	Assert(TransactionIdIsValid(RecentGlobalXmin));
+	Assert(BufferGetBlockNumber(buffer) == blkno);
+
+	/* Scan through possible multiple members of HOT-chain */
+	for (;;)
+	{
+		ItemId		lp;
+
+		/* check for bogus TID */
+		if (offnum < FirstOffsetNumber || offnum > PageGetMaxOffsetNumber(dp))
+			break;
+
+		lp = PageGetItemId(dp, offnum);
+
+		/* check for unused, dead, or redirected items */
+		if (!ItemIdIsNormal(lp))
+		{
+			/* We should only see a redirect at start of chain */
+			if (ItemIdIsRedirected(lp) && at_chain_start)
+			{
+				/* Follow the redirect */
+				offnum = ItemIdGetRedirect(lp);
+				at_chain_start = false;
+				continue;
+			}
+			/* else must be end of chain */
+			break;
+		}
+
+		/*
+		 * Update heapTuple to point to the element of the HOT chain we're
+		 * currently investigating. Having t_self set correctly is important
+		 * because the SSI checks and the *Satisfies routine for historical
+		 * MVCC snapshots need the correct tid to decide about the visibility.
+		 */
+		heapTuple->t_data = (HeapTupleHeader) PageGetItem(dp, lp);
+		heapTuple->t_len = ItemIdGetLength(lp);
+		heapTuple->t_tableOid = RelationGetRelid(relation);
+		ItemPointerSet(&heapTuple->t_self, blkno, offnum);
+
+		/*
+		 * Shouldn't see a HEAP_ONLY tuple at chain start.
+		 */
+		if (at_chain_start && HeapTupleIsHeapOnly(heapTuple))
+			break;
+
+		/*
+		 * The xmin should match the previous xmax value, else chain is
+		 * broken.
+		 */
+		if (TransactionIdIsValid(prev_xmax) &&
+			!TransactionIdEquals(prev_xmax,
+								 HeapTupleHeaderGetXmin(heapTuple->t_data)))
+			break;
+
+		/*
+		 * When first_call is true (and thus, skip is initially false) we'll
+		 * return the first tuple we find.  But on later passes, heapTuple
+		 * will initially be pointing to the tuple we returned last time.
+		 * Returning it again would be incorrect (and would loop forever), so
+		 * we skip it and return the next match we find.
+		 */
+		if (!skip)
+		{
+			/* If it's visible per the snapshot, we must return it */
+			valid = HeapTupleSatisfiesVisibility(heapTuple, snapshot, buffer);
+			CheckForSerializableConflictOut(valid, relation, heapTuple,
+											buffer, snapshot);
+
+			if (valid)
+			{
+				ItemPointerSetOffsetNumber(tid, offnum);
+				PredicateLockTuple(relation, heapTuple, snapshot);
+				if (all_dead)
+					*all_dead = false;
+
+				return true;
+			}
+		}
+		skip = false;
+
+		/*
+		 * If we can't see it, maybe no one else can either.  At caller
+		 * request, check whether all chain members are dead to all
+		 * transactions.
+		 *
+		 * Note: if you change the criterion here for what is "dead", fix the
+		 * planner's get_actual_variable_range() function to match.
+		 */
+		if (all_dead && *all_dead &&
+			!HeapTupleIsSurelyDead(heapTuple, RecentGlobalXmin))
+			*all_dead = false;
+
+		/*
+		 * Check to see if HOT chain continues past this tuple; if so fetch
+		 * the next offnum and loop around.
+		 */
+		if (HeapTupleIsHotUpdated(heapTuple))
+		{
+			Assert(ItemPointerGetBlockNumber(&heapTuple->t_data->t_ctid) ==
+				   blkno);
+			offnum = ItemPointerGetOffsetNumber(&heapTuple->t_data->t_ctid);
+			at_chain_start = false;
+			prev_xmax = HeapTupleHeaderGetUpdateXid(heapTuple->t_data);
+		}
+		else
+			break;				/* end of chain */
+	}
+
+	return false;
+}
+#endif
 
 /*
  *	heap_get_latest_tid -  get the latest tid of a specified tuple
@@ -2039,9 +2221,16 @@ heap_insert(Relation relation, HeapTuple tup, CommandId cid,
 	 * Find buffer to insert this tuple into.  If the page is all visible,
 	 * this will also pin the requisite visibility map page.
 	 */
+#ifndef HYU_LLT
+	 /* Find a buffer having free space for 2 tuples */
+	buffer = RelationGetBufferForTuples(relation, heaptup->t_len,
+									    InvalidBuffer, options, bistate,
+									    &vmbuffer, NULL, 2);
+#else
 	buffer = RelationGetBufferForTuple(relation, heaptup->t_len,
 									   InvalidBuffer, options, bistate,
 									   &vmbuffer, NULL);
+#endif
 
 	/*
 	 * We're about to do the actual insert -- but check for conflict first, to
@@ -2063,8 +2252,13 @@ heap_insert(Relation relation, HeapTuple tup, CommandId cid,
 	/* NO EREPORT(ERROR) from here till changes are logged */
 	START_CRIT_SECTION();
 
+#ifndef HYU_LLT
+	RelationPutHeapTupleWithDummy(relation, buffer, heaptup,
+								  (options & HEAP_INSERT_SPECULATIVE) != 0);
+#else
 	RelationPutHeapTuple(relation, buffer, heaptup,
 						 (options & HEAP_INSERT_SPECULATIVE) != 0);
+#endif
 
 	if (PageIsAllVisible(BufferGetPage(buffer)))
 	{
@@ -2328,9 +2522,15 @@ heap_multi_insert(Relation relation, TupleTableSlot **slots, int ntuples,
 		 * Find buffer where at least the next tuple will fit.  If the page is
 		 * all-visible, this will also pin the requisite visibility map page.
 		 */
+#ifndef HYU_LLT
+		buffer = RelationGetBufferForTuples(relation, heaptuples[ndone]->t_len,
+										   InvalidBuffer, options, bistate,
+										   &vmbuffer, NULL, 2);
+#else
 		buffer = RelationGetBufferForTuple(relation, heaptuples[ndone]->t_len,
 										   InvalidBuffer, options, bistate,
 										   &vmbuffer, NULL);
+#endif
 		page = BufferGetPage(buffer);
 
 		/* NO EREPORT(ERROR) from here till changes are logged */
@@ -2340,16 +2540,29 @@ heap_multi_insert(Relation relation, TupleTableSlot **slots, int ntuples,
 		 * RelationGetBufferForTuple has ensured that the first tuple fits.
 		 * Put that on the page, and then as many other tuples as fit.
 		 */
+#ifndef HYU_LLT
+		RelationPutHeapTupleWithDummy(
+				relation, buffer, heaptuples[ndone], false);
+#else
 		RelationPutHeapTuple(relation, buffer, heaptuples[ndone], false);
+#endif
 		for (nthispage = 1; ndone + nthispage < ntuples; nthispage++)
 		{
 			HeapTuple	heaptup = heaptuples[ndone + nthispage];
 
-			if (PageGetHeapFreeSpace(page) < MAXALIGN(heaptup->t_len) + saveFreeSpace)
+#ifndef HYU_LLT
+			if (PageGetHeapFreeSpaceWithLP(page, 2) <
+					MAXALIGN(heaptup->t_len) * 2 + saveFreeSpace)
 				break;
-
+			
+			RelationPutHeapTupleWithDummy(relation, buffer, heaptup, false);
+#else
+			if (PageGetHeapFreeSpace(page) <
+					MAXALIGN(heaptup->t_len) + saveFreeSpace)
+				break;
+			
 			RelationPutHeapTuple(relation, buffer, heaptup, false);
-
+#endif
 			/*
 			 * We don't use heap_multi_insert for catalog tuples yet, but
 			 * better be prepared...

@@ -80,6 +80,9 @@ typedef struct IndexFetchHeapData
 
 	Buffer		xs_cbuf;		/* current heap buffer in scan, if any */
 	/* NB: if xs_cbuf is not InvalidBuffer, we hold a pin on that buffer */
+#ifndef HYU_LLT
+	int			xs_vcache;		/* current vcache in scan, if any */
+#endif
 } IndexFetchHeapData;
 
 /* Result codes for HeapTupleSatisfiesVacuum */

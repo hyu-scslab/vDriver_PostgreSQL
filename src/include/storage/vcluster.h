@@ -101,11 +101,15 @@ extern void VClusterShmemInit(void);
 extern void VClusterDsaInit(void);
 extern void VClusterAttachDsa(void);
 extern void VClusterDetachDsa(void);
-
+#if 0
 extern bool VClusterLookupTuple(PrimaryKey primary_key,
 								Size size,
 								Snapshot snapshot,
 								void *ret_tuple);
+#endif
+extern int VClusterLookupTuple(PrimaryKey primary_key,
+							   Snapshot snapshot,
+							   void **ret_tuple);
 
 extern void VClusterAppendTuple(VCLUSTER_TYPE cluster_type,
 								PrimaryKey primary_key,

@@ -20,6 +20,7 @@
 #include "storage/shmem.h"
 #include "storage/vchain.h"
 #include "storage/vchain_hash.h"
+#include "utils/snapmgr.h"
 
 /*
  * VChainShmemSize

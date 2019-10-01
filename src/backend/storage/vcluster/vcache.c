@@ -45,7 +45,7 @@ static int VCacheGetCacheRef(VSegmentId seg_id,
 
 static void VCacheReadSegmentPage(const VCacheTag *tag, int cache_id);
 static void VCacheWriteSegmentPage(const VCacheTag *tag, int cache_id);
-static void VCacheUnref(VCacheDesc *cache);
+static void VCacheUnrefInternal(VCacheDesc *cache);
 
 /*
  * VCacheShmemSize
@@ -173,11 +173,11 @@ VCacheAppendTuple(VSegmentId seg_id,
 		 * Mark it as dirty so that it could be flushed when evicted.
 		 */
 		cache->is_dirty = true;
-		VCacheUnref(cache);
+		VCacheUnrefInternal(cache);
 	}
 
 	/* Whether or not the page has been full, we should unref the page */
-	VCacheUnref(cache);
+	VCacheUnrefInternal(cache);
 
 	/*
 	 * OPTIMIZATION: To relax the contention between appending transactions
@@ -201,8 +201,37 @@ VCacheAppendTuple(VSegmentId seg_id,
 					reserved_seg_id, reserved_seg_offset, true);
 		}
 		cache = GetVCacheDescriptor(cache_id);
-		VCacheUnref(cache);
+		VCacheUnrefInternal(cache);
 	}
+}
+
+/*
+ * VCacheReadTupleRef
+ *
+ * Read a tuple from the given seg_id and seg_offset. Set ret_tuple to the
+ * pointer of the found tuple.
+ * Return the cache_id of the vcache entry having the tuple.
+ *
+ * IMPORTANT: Returned vcache entry is pinned so that caller must
+ * unpin it after using.
+ */
+int
+VCacheReadTupleRef(VSegmentId seg_id,
+				   VSegmentOffset seg_offset,
+				   void **ret_tuple)
+{
+	int			cache_id;			/* vcache index of target segment page */
+	int			page_offset;
+
+	cache_id = VCacheGetCacheRef(seg_id, seg_offset, false);
+
+	page_offset = seg_offset % SEG_PAGESZ;
+
+	/* Set ret_tuple to the pointer of the tuple in the cache */
+	*ret_tuple = &VCacheBlocks[cache_id * SEG_PAGESZ + page_offset];
+
+	/* Caller must unpin the cache entry for cache_id */
+	return cache_id;
 }
 
 /*
@@ -232,7 +261,36 @@ VCacheReadTuple(VSegmentId seg_id,
 			tuple_size);
 
 	/* We should unref this page */
-	VCacheUnref(cache);
+	VCacheUnrefInternal(cache);
+}
+
+/*
+ * VCacheIsValid
+ *
+ * Return true if the cache_id is valid. Return false if not.
+ */
+bool
+VCacheIsValid(int cache_id)
+{
+	return cache_id < NVCache;
+}
+
+/*
+ * VCacheUnref
+ *
+ * Decrease the refcount of the given cache index
+ */
+void
+VCacheUnref(int cache_id)
+{
+	VCacheDesc *cache;
+	if (!VCacheIsValid(cache_id))
+	{
+		elog(ERROR, "cache_id is not valid");
+		return;
+	}
+	cache = GetVCacheDescriptor(cache_id);
+	VCacheUnrefInternal(cache);
 }
 
 /*
@@ -448,13 +506,16 @@ find_cand:
 }
 
 /*
- * VCacheUnref
+ * VCacheUnrefInternal
  *
  * Decrease the refcount of the given cache entry
  */
 static void
-VCacheUnref(VCacheDesc *cache)
+VCacheUnrefInternal(VCacheDesc *cache)
 {
+	if (pg_atomic_read_u32(&cache->refcount) == 0)
+		elog(ERROR, "VCacheUnrefInternal refcount == 0");
+
 	pg_atomic_fetch_sub_u32(&cache->refcount, 1);
 }
 
