@@ -55,6 +55,7 @@ static dsa_pointer AllocNewSegmentInternal(dsa_area *dsa,
 static dsa_pointer AllocNewSegment(VCLUSTER_TYPE type);
 static void PrepareSegmentFile(VSegmentId seg_id);
 static void VClusterCutProcessMain(void);
+static void GCProcessMain(void);
 
 /*
  * VClusterShmemSize
@@ -103,7 +104,7 @@ VClusterShmemInit(void)
 }
 
 /*
- * VCutterStart
+ * StartVCutter
  *
  * Fork vcutter process.
  */
@@ -126,6 +127,32 @@ StartVCutter(void)
 	}
 
 	return cutter_pid;
+}
+
+/*
+ * StartGC
+ *
+ * Fork garbage collector process.
+ */
+pid_t
+StartGC(void)
+{
+	pid_t		gc_pid;
+
+	/* Start a cutter process. */
+	gc_pid = fork_process();
+	if (gc_pid == -1) {
+		/* error */
+	}
+	else if (gc_pid == 0) {
+		/* child */
+		GCProcessMain(); /* no return */
+	}
+	else {
+		/* parent */
+	}
+
+	return gc_pid;
 }
 
 
@@ -500,20 +527,22 @@ CutSegment(VSegmentDesc* victim)
 /*
  * CutVSegDesc
  *
- * Find cuttable vseg desc from vseg desc list and cut it.
+ * Find cuttable vseg desc from vseg desc list and cut it(logical delete).
  */
 static void
 CutVSegDesc(VCLUSTER_TYPE cluster_type)
 {
-	dsa_pointer		dsap_victim = 0;
-	dsa_pointer		dsap_victim_prev = 0;
-	VSegmentDesc*	victim = NULL;
-	VSegmentDesc*	victim_prev = NULL;
+	dsa_pointer		dsap_victim;
+	dsa_pointer		dsap_victim_prev;
+	VSegmentDesc*	victim;
+	VSegmentDesc*	victim_prev;
 	dsa_pointer		dsap_old_tail;
 	VSegmentDesc*	old_tail;
 
 start_from_head:
 	/* Find cuttable segment des */
+	dsap_victim_prev = 0;
+	victim_prev = NULL;
 	dsap_victim = vclusters->head[cluster_type];
 	victim = (VSegmentDesc *)dsa_get_address(
 			dsa_vcluster, dsap_victim);
@@ -633,5 +662,110 @@ VClusterCutProcessMain(void)
 	}
 }
 
+/*
+ * GarbageCollect
+ *
+ * Iterate garbage list and free node if the node is never accessible.
+ * Accessiblility is known by checking timestamp.
+ * If a node's timestamp < GetMinimumTimestamp(), it is safe to free.
+ * We assume that garbage list is accessed by only ONE producer(cutter)
+ * and only ONE consumer(garbage collector). producer access on tail and
+ * consumer access on head.
+ */
+static void
+GarbageCollect(VCLUSTER_TYPE cluster_type)
+{
+	dsa_pointer		dsap_victim;
+	dsa_pointer		dsap_victim_prev;
+	VSegmentDesc*	victim;
+	VSegmentDesc*	victim_prev;
+	TimestampTz		min_ts;
+
+
+	dsap_victim = 0;
+	victim = NULL;
+	dsap_victim_prev = vclusters->garbage_list_head[cluster_type];
+	victim_prev = (VSegmentDesc *)dsa_get_address(
+			dsa_vcluster, dsap_victim_prev);
+
+	for (;;) {
+		dsap_victim = victim_prev->next;
+
+		if (dsap_victim == 0) {
+			/* No more node. */
+			goto end;
+		}
+
+		victim = (VSegmentDesc *)dsa_get_address(
+				dsa_vcluster, dsap_victim);
+
+		/* Get minimum timestamp in thread table. */
+		min_ts = GetMinimumTimestamp();
+		
+		/* Check timestamp of vseg desc. */
+		if (victim->timestamp >= min_ts) {
+			/* This vseg desc is accessible by other process. It's not safe to free. */
+			goto next;
+		}
+
+		/* Check timestamp of vlocators. */
+		for (int i = 0; i < VCLUSTER_SEG_NUM_ENTRY; i++) {
+			TimestampTz ts;
+			ts = victim->locators[i].timestamp;
+			if (ts >= min_ts || ts == TS_NONE) {
+				/* This vlocator is accessible by other process. It's not safe to free. */
+				goto next;
+			}
+		}
+
+		/* Link prev to next. */
+		victim_prev->next = victim->next;
+
+		/* OK. Let's free it. */
+		dsa_free(dsa_vcluster, dsap_victim);
+
+		dsap_victim = dsap_victim_prev;
+		victim = victim_prev;
+
+next:
+		/* Move to next node. */
+		dsap_victim_prev = dsap_victim;
+		victim_prev = victim;
+	}
+
+end:
+	return;
+}
+
+/*
+ * GCProcessMain
+ *
+ * Main function of garbage collector process.
+ */
+static void
+GCProcessMain(void)
+{
+	/* just copy routine to hear from other process-generation-code */
+	/* ex) StartAutoVacLauncher */
+	InitPostmasterChild();
+	ClosePostmasterPorts(false);
+	SetProcessingMode(InitProcessing);
+	pqsignal(SIGQUIT, my_quick_die);
+	pqsignal(SIGTERM, my_quick_die);
+	pqsignal(SIGKILL, my_quick_die);
+	pqsignal(SIGINT, my_quick_die);
+	PG_SETMASK(&UnBlockSig);
+	BaseInit();
+	InitProcess();
+
+	for (;;) {
+		elog(WARNING, "HYU_LLT : gc looping..");
+		for (VCLUSTER_TYPE type = 0; type < VCLUSTER_NUM; type++) {
+			GarbageCollect(type);
+		}
+
+		sleep(1);
+	}
+}
 
 #endif /* HYU_LLT */

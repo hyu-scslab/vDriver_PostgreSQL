@@ -83,7 +83,7 @@ DeadZoneInit(void)
 }
 
 /*
- * DeadZoneUpdaterStart
+ * StartDeadZoneUpdater
  *
  * Fork dead zone updater process.
  */

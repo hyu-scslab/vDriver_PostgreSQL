@@ -260,6 +260,7 @@ static pid_t StartupPID = 0,
 #ifdef HYU_LLT
 			VCutterPID = 0,
 			DeadZoneUpdaterPID = 0,
+			GCPID = 0,
 #endif
 			PgArchPID = 0,
 			PgStatPID = 0,
@@ -1296,6 +1297,7 @@ PostmasterMain(int argc, char *argv[])
 #ifdef HYU_LLT
 	VCutterPID = StartVCutter();
 	DeadZoneUpdaterPID = StartDeadZoneUpdater();
+	GCPID = StartGC();
 #endif
 
 	/*
@@ -2759,6 +2761,8 @@ pmdie(SIGNAL_ARGS)
 					signal_child(VCutterPID, SIGTERM);
 				if (DeadZoneUpdaterPID != 0)
 					signal_child(DeadZoneUpdaterPID, SIGTERM);
+				if (GCPID != 0)
+					signal_child(GCPID, SIGTERM);
 #endif
 
 				/*
@@ -2813,6 +2817,8 @@ pmdie(SIGNAL_ARGS)
 				signal_child(VCutterPID, SIGTERM);
 			if (DeadZoneUpdaterPID != 0)
 				signal_child(DeadZoneUpdaterPID, SIGTERM);
+			if (GCPID != 0)
+				signal_child(GCPID, SIGTERM);
 #endif
 			if (pmState == PM_STARTUP || pmState == PM_RECOVERY)
 			{
@@ -4074,6 +4080,8 @@ TerminateChildren(int signal)
 		signal_child(VCutterPID, signal);
 	if (DeadZoneUpdaterPID != 0)
 		signal_child(DeadZoneUpdaterPID, signal);
+	if (GCPID != 0)
+		signal_child(GCPID, signal);
 #endif
 }
 

@@ -110,6 +110,7 @@ typedef struct {
 	/* garbage list is accessed by ONE producer(cutter) and
 	 * ONE consumer(garbage collector), and this is implement
 	 * that a producer and a consumer can access it concurrently. */
+	/* There is one dummy node. */
 	dsa_pointer			garbage_list_head[VCLUSTER_NUM];
 	dsa_pointer			garbage_list_tail[VCLUSTER_NUM];
 
@@ -132,6 +133,7 @@ extern void VClusterDsaInit(void);
 extern void VClusterAttachDsa(void);
 extern void VClusterDetachDsa(void);
 extern pid_t StartVCutter(void);
+extern pid_t StartGC(void);
 
 extern bool VClusterLookupTuple(PrimaryKey primary_key,
 								Size size,
@@ -144,6 +146,7 @@ extern void VClusterAppendTuple(VCLUSTER_TYPE cluster_type,
 								TransactionId xmax,
 								Size tuple_size,
 								const void *tuple);
+
 
 extern void my_quick_die(SIGNAL_ARGS);
 
