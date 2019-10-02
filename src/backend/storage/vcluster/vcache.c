@@ -223,6 +223,9 @@ VCacheReadTupleRef(VSegmentId seg_id,
 	int			cache_id;			/* vcache index of target segment page */
 	int			page_offset;
 
+	elog(WARNING, "@@ VCacheReadTupleRef, seg_id: %d, seg_offset: %d",
+		seg_id, seg_offset);
+
 	cache_id = VCacheGetCacheRef(seg_id, seg_offset, false);
 
 	page_offset = seg_offset % SEG_PAGESZ;
@@ -289,6 +292,7 @@ VCacheUnref(int cache_id)
 		elog(ERROR, "cache_id is not valid");
 		return;
 	}
+	elog(WARNING, "VCacheUnrefInternal, cache_id: %d", cache_id);
 	cache = GetVCacheDescriptor(cache_id);
 	VCacheUnrefInternal(cache);
 }

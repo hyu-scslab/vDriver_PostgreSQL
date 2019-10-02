@@ -515,7 +515,6 @@ PageAddItemExtended(Page page,
 	if (lower > upper)
 	{
 		elog(WARNING, "lower > upper");
-		sleep(10);
 		return InvalidOffsetNumber;
 	}
 

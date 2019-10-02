@@ -95,6 +95,11 @@ typedef enum
 	HEAPTUPLE_DELETE_IN_PROGRESS	/* deleting xact is still in progress */
 } HTSV_Result;
 
+#ifndef HYU_LLT
+/* Tricky variable for passing the cmd type from ExecutePlan to heap code */
+extern CmdType curr_cmdtype;
+#endif
+
 /* ----------------
  *		function prototypes for heap access method
  *
@@ -126,6 +131,12 @@ extern bool heap_getnextslot(TableScanDesc sscan,
 
 extern bool heap_fetch(Relation relation, Snapshot snapshot,
 					   HeapTuple tuple, Buffer *userbuf);
+#ifndef HYU_LLT
+extern bool heap_hot_search_buffer_with_vc(ItemPointer tid, Relation relation,
+										   Buffer buffer, Snapshot snapshot,
+										   HeapTuple heapTuple, bool *all_dead,
+										   bool first_call, int *ret_cache_id);
+#endif
 extern bool heap_hot_search_buffer(ItemPointer tid, Relation relation,
 								   Buffer buffer, Snapshot snapshot, HeapTuple heapTuple,
 								   bool *all_dead, bool first_call);

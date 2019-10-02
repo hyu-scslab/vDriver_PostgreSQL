@@ -1613,6 +1613,7 @@ ExecutePlan(EState *estate,
 	uint64		current_tuple_count;
 
 #ifndef HYU_LLT /* USEFUL BREAKPOINT */
+	curr_cmdtype = operation;
 #endif
 
 	/*

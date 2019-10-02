@@ -73,6 +73,10 @@
 #include "utils/snapmgr.h"
 #include "utils/spccache.h"
 
+#ifndef HYU_LLT
+/* Tricky variable for passing the cmd type from ExecutePlan to heap code */
+CmdType curr_cmdtype;
+#endif
 
 static HeapTuple heap_prepare_insert(Relation relation, HeapTuple tup,
 									 TransactionId xid, CommandId cid, int options);
@@ -396,7 +400,6 @@ heapgetpage(TableScanDesc sscan, BlockNumber page)
 	 * Prune and repair fragmentation for the whole page, if possible.
 	 */
 #ifndef HYU_LLT /* Removed original pruning */
-	//heap_page_prune_opt(scan->rs_base.rs_rd, buffer);
 #else
 	heap_page_prune_opt(scan->rs_base.rs_rd, buffer);
 #endif
@@ -1532,27 +1535,29 @@ heap_fetch(Relation relation,
  * heap_fetch, we do not report any pgstats count; caller may do so if wanted.
  */
 bool
-heap_hot_search_buffer(ItemPointer tid, Relation relation, Buffer buffer,
-					   Snapshot snapshot, HeapTuple heapTuple,
-					   bool *all_dead, bool first_call)
-					   //bool *all_dead, bool first_call, bool for_update)
+heap_hot_search_buffer_with_vc(ItemPointer tid, Relation relation,
+							   Buffer buffer, Snapshot snapshot,
+							   HeapTuple heapTuple, bool *all_dead,
+							   bool first_call, int *ret_cache_id)
 {
-	Page		dp = (Page) BufferGetPage(buffer);
-	TransactionId prev_xmax = InvalidTransactionId;
-	BlockNumber blkno;
-	OffsetNumber offnum;
-	bool		at_chain_start;
-	bool		valid;
-	bool		skip;
-#ifndef HYU_LLT
+	Page			dp = (Page) BufferGetPage(buffer);
+	TransactionId 	prev_xmax = InvalidTransactionId;
+	BlockNumber 	blkno;
+	OffsetNumber 	offnum;
+	bool			at_chain_start;
+	bool			valid;
+	bool			skip;
+	ItemId			lp;
+	
+	/* For lookup version cluster */
 	Datum			primary_key;
 	Bitmapset	   *bms_pk;
 	int				attnum_pk;
 	bool			is_null;
+	int				cache_id;
 
 	/* Test variables */
 	HeapTupleHeader	org_tuple_header;
-#endif
 
 	/* If this is not the first call, previous call returned a (live!) tuple */
 	if (all_dead)
@@ -1566,274 +1571,291 @@ heap_hot_search_buffer(ItemPointer tid, Relation relation, Buffer buffer,
 	Assert(TransactionIdIsValid(RecentGlobalXmin));
 	Assert(BufferGetBlockNumber(buffer) == blkno);
 
-	/* Scan through possible multiple members of HOT-chain */
-	for (;;)
+	/*
+	 * We only store two versions (recent and 1st old) in a heap page,
+	 * and we are not using HOT-chain anymore.
+	 * Instead of following the HOT-chain, we only lookup two contiguous
+	 * tuple, and if not found, request a lookup into the version cluster.
+	 */
+
+	/* check for bogus TID */
+	if (offnum < FirstOffsetNumber || offnum > PageGetMaxOffsetNumber(dp))
+		return false;
+
+	lp = PageGetItemId(dp, offnum);
+
+	/* check for unused, dead, or redirected items */
+	if (!ItemIdIsNormal(lp))
 	{
-		ItemId		lp;
+		elog(ERROR, "item id is not normal");
+		return false;
+	}
+	/* Check if the line pointer is the left one, and not unused */
+	if (!LP_OVR_IS_LEFT(lp) || LP_OVR_IS_UNUSED(lp))
+	{
+		elog(ERROR, "item id is not left or unused: %d", lp->lp_oviraptor);
+		return false;
+	}
+	/*
+	* Update heapTuple to point to the element of the HOT chain we're
+	* currently investigating. Having t_self set correctly is important
+	* because the SSI checks and the *Satisfies routine for historical
+	* MVCC snapshots need the correct tid to decide about the visibility.
+	* NOTE: I'm not sure if the setting of t_self is necessary now - jongbin
+	*/
+	heapTuple->t_data = (HeapTupleHeader) PageGetItem(dp, lp);
+	heapTuple->t_len = ItemIdGetLength(lp);
+	heapTuple->t_tableOid = RelationGetRelid(relation);
+	ItemPointerSet(&heapTuple->t_self, blkno, offnum);
 
-		/* check for bogus TID */
-		if (offnum < FirstOffsetNumber || offnum > PageGetMaxOffsetNumber(dp))
-			break;
+	/* If it's visible per the snapshot, we must return it */
+	valid = HeapTupleSatisfiesVisibility(heapTuple, snapshot, buffer);
+	CheckForSerializableConflictOut(valid, relation, heapTuple,
+									buffer, snapshot);
 
-		lp = PageGetItemId(dp, offnum);
-
-		/* check for unused, dead, or redirected items */
-		if (!ItemIdIsNormal(lp))
-		{
-			/* We should only see a redirect at start of chain */
-			if (ItemIdIsRedirected(lp) && at_chain_start)
-			{
-				/* Follow the redirect */
-				offnum = ItemIdGetRedirect(lp);
-				at_chain_start = false;
-				continue;
-			}
-			/* else must be end of chain */
-			break;
-		}
-
-		/*
-		 * Update heapTuple to point to the element of the HOT chain we're
-		 * currently investigating. Having t_self set correctly is important
-		 * because the SSI checks and the *Satisfies routine for historical
-		 * MVCC snapshots need the correct tid to decide about the visibility.
-		 */
-		heapTuple->t_data = (HeapTupleHeader) PageGetItem(dp, lp);
-		heapTuple->t_len = ItemIdGetLength(lp);
-		heapTuple->t_tableOid = RelationGetRelid(relation);
-		ItemPointerSet(&heapTuple->t_self, blkno, offnum);
-
-		/*
-		 * Shouldn't see a HEAP_ONLY tuple at chain start.
-		 */
-		if (at_chain_start && HeapTupleIsHeapOnly(heapTuple))
-			break;
-
-		/*
-		 * The xmin should match the previous xmax value, else chain is
-		 * broken.
-		 */
-		if (TransactionIdIsValid(prev_xmax) &&
-			!TransactionIdEquals(prev_xmax,
-								 HeapTupleHeaderGetXmin(heapTuple->t_data)))
-			break;
-
-		/*
-		 * When first_call is true (and thus, skip is initially false) we'll
-		 * return the first tuple we find.  But on later passes, heapTuple
-		 * will initially be pointing to the tuple we returned last time.
-		 * Returning it again would be incorrect (and would loop forever), so
-		 * we skip it and return the next match we find.
-		 */
-		if (!skip)
-		{
-			/* If it's visible per the snapshot, we must return it */
-			valid = HeapTupleSatisfiesVisibility(heapTuple, snapshot, buffer);
-			CheckForSerializableConflictOut(valid, relation, heapTuple,
-											buffer, snapshot);
-
-			if (valid)
-			{
-				ItemPointerSetOffsetNumber(tid, offnum);
-				PredicateLockTuple(relation, heapTuple, snapshot);
-				if (all_dead)
-					*all_dead = false;
-
-#ifndef HYU_LLT
-			/*
-			 * We just checked the visibility above and found the tuple, so
-			 * try to find the visible version in the chain again and compare.
-			 */
-			org_tuple_header = (HeapTupleHeader)(heapTuple->t_data);
-			if (relation->rd_indexattr != NULL &&
-				org_tuple_header->t_choice.t_heap.t_xmax != 0 &&
-				!(org_tuple_header->t_infomask & HEAP_XMAX_INVALID))
-			{
-				/*
-				 * Get a bitmapset of the primary key of the tuple.
-				 * RelationGetIndexAttrBitmap function calls here recursively
-				 * if the attr is not cached yet. To avoid the infinite
-				 * recursive call, we mark the flag being_read_idxattr here.
-				 */
-				bms_pk = RelationGetIndexAttrBitmap(
-					relation, INDEX_ATTR_BITMAP_PRIMARY_KEY);
-
-			/*
-			 * At this time, we only support a relation having one primary key.
-			 * Some of background process could get into here with a bitmapset
-			 * with size 0, so we ignore that cases.
-			 */
-			if (bms_num_members(bms_pk) == 1)
-			{
-				char tmpbuf[256];
-				/*
-				 * Need to add FirstLowInvalidHeapAttributeNumber to get the
-				 * exact attribute number of the primary key.
-				 * See the comment above RelationGetIndexAttrBitmap function.
-				 */
-				attnum_pk = bms_singleton_member(bms_pk) +
-						FirstLowInvalidHeapAttributeNumber;
-
-				/* Retrive the primary key from the old tuple */
-				primary_key = heap_getattr(
-						heapTuple, attnum_pk, relation->rd_att, &is_null);
-				
-				memset(tmpbuf, 0, 256);
-
-				/* Find the old version from the vcluster */
-				{
-					HeapTupleHeader tmp_heap_tuple;
-					int cache_id;
-					static int t = 0;
-					if (t == 0)
-					{
-						//sleep(10);
-						t = 1;
-					}
-					cache_id = VClusterLookupTuple(
-							primary_key, snapshot, &tmp_heap_tuple);
-					if (VCacheIsValid(cache_id))
-					{
-						VCacheUnref(cache_id);
-					}
-				}
-#if 0
-				VClusterLookupTuple(primary_key, heapTuple->t_len,
-									snapshot, tmpbuf);
-#endif
-#if 0 // Lookup and verify
-				if (VClusterLookupTuple(primary_key, heapTuple->t_len,
-										snapshot, tmpbuf))
-				{
-					/* Verify it */
-				bool failed = false;
-				char orgbuf[256];
-
-				memset(orgbuf, 0, 256);
-				memcpy(orgbuf, heapTuple->t_data, heapTuple->t_len);
-				for (int i = heapTuple->t_data->t_hoff;
-						i < heapTuple->t_len - heapTuple->t_data->t_hoff; i++)
-				{
-					if (tmpbuf[i] != orgbuf[i])
-					{
-						failed = true;
-						break;
-					}
-				}
-				if (!failed)
-				{
-					ereport(LOG, (errmsg("@@ VCHAIN VERIFIED SUCCESS")));
-				}
-				else
-				{
-				ereport(LOG, (errmsg("@@ VCHAIN VERIFIED FAILED")));
-				ereport(LOG, (errmsg("@@ (%d) org xmin: %d, xmax: %d",
-						primary_key, org_tuple_header->t_choice.t_heap.t_xmin,
-						org_tuple_header->t_choice.t_heap.t_xmax)));
-				ereport(LOG, (errmsg("@@ SNAPSHOT xmin: %d, xmax: %d",
-						snapshot->xmin, snapshot->xmax)));
-				ereport(LOG, (errmsg("HeapTupleHeaderXminCommitted: %d",
-						HeapTupleHeaderXminCommitted(org_tuple_header))));
-				ereport(LOG, (errmsg("HeapTupleHeaderXminFrozen: %d",
-						HeapTupleHeaderXminFrozen(org_tuple_header))));
-				ereport(LOG, (errmsg("XidInMVCCSnapshot(xmax): %d",
-						XidInMVCCSnapshot(
-						org_tuple_header->t_choice.t_heap.t_xmax, snapshot))));
-				ereport(LOG, (errmsg(
-						"tuple->t_infomask & HEAP_XMAX_INVALID: %d",
-						org_tuple_header->t_infomask & HEAP_XMAX_INVALID)));
-				ereport(LOG, (errmsg(
-						"HEAP_XMAX_IS_LOCKED_ONLY(tuple->t_infomask): %d",
-						HEAP_XMAX_IS_LOCKED_ONLY(org_tuple_header->t_infomask))));
-				ereport(LOG, (errmsg(
-						"tuple->t_infomask & HEAP_XMAX_IS_MULTI: %d",
-						org_tuple_header->t_infomask & HEAP_XMAX_IS_MULTI)));
-				ereport(LOG, (errmsg(
-						"tuple->t_infomask & HEAP_XMAX_COMMITTED: %d",
-						org_tuple_header->t_infomask & HEAP_XMAX_COMMITTED)));
-				ereport(LOG, (errmsg("tuple->t_infomask: %d",
-						org_tuple_header->t_infomask)));
-				ereport(LOG, (errmsg("version->t_infomask: %d",
-						(((HeapTupleHeader)(tmpbuf))->t_infomask))));
-				for (int i = 0; i < heapTuple->t_len; i++)
-				{
-					if (tmpbuf[i] == 0) tmpbuf[i] = ' ';
-					if (orgbuf[i] == 0) orgbuf[i] = ' ';
-				}
-				ereport(LOG, (errmsg("@@ tmpbuf: %s, orgbuf(%d): %s",
-						tmpbuf, heapTuple->t_len, orgbuf)));
-
-				for (int j = 0; j < snapshot->xcnt; j++)
-				{
-					ereport(LOG, (errmsg("## snapshot[%d]: %d", j, snapshot->xip[j])));
-				}
-				}
-				}
-				else
-				{
-					ereport(LOG, (errmsg(
-							"@@ VCHAIN NOT FOUND (%d), org xmin: %d, xmax: %d",
-							primary_key, org_tuple_header->t_choice.t_heap.t_xmin,
-							org_tuple_header->t_choice.t_heap.t_xmax)));
-					ereport(LOG, (errmsg("@@ SNAPSHOT xmin: %d, xmax: %d",
-							snapshot->xmin, snapshot->xmax)));
-					ereport(LOG, (errmsg("HeapTupleHeaderXminCommitted: %d",
-							HeapTupleHeaderXminCommitted(org_tuple_header))));
-					ereport(LOG, (errmsg("HeapTupleHeaderXminFrozen: %d",
-							HeapTupleHeaderXminFrozen(org_tuple_header))));
-					ereport(LOG, (errmsg("XidInMVCCSnapshot(xmax): %d",
-							XidInMVCCSnapshot(
-							org_tuple_header->t_choice.t_heap.t_xmax, snapshot))));
-					ereport(LOG, (errmsg(
-							"tuple->t_infomask & HEAP_XMAX_INVALID: %d",
-							org_tuple_header->t_infomask & HEAP_XMAX_INVALID)));
-					ereport(LOG, (errmsg(
-							"HEAP_XMAX_IS_LOCKED_ONLY(tuple->t_infomask): %d",
-							HEAP_XMAX_IS_LOCKED_ONLY(org_tuple_header->t_infomask))));
-				}
-#endif
-			}
-			}
-#endif
-
-
-				return true;
-			}
-		}
-		skip = false;
-
-		/*
-		 * If we can't see it, maybe no one else can either.  At caller
-		 * request, check whether all chain members are dead to all
-		 * transactions.
-		 *
-		 * Note: if you change the criterion here for what is "dead", fix the
-		 * planner's get_actual_variable_range() function to match.
-		 */
-		if (all_dead && *all_dead &&
-			!HeapTupleIsSurelyDead(heapTuple, RecentGlobalXmin))
+	if (valid)
+	{
+		ItemPointerSetOffsetNumber(tid, offnum);
+		PredicateLockTuple(relation, heapTuple, snapshot);
+		if (all_dead)
 			*all_dead = false;
 
-		/*
-		 * Check to see if HOT chain continues past this tuple; if so fetch
-		 * the next offnum and loop around.
-		 */
-		if (HeapTupleIsHotUpdated(heapTuple))
-		{
-			Assert(ItemPointerGetBlockNumber(&heapTuple->t_data->t_ctid) ==
-				   blkno);
-			offnum = ItemPointerGetOffsetNumber(&heapTuple->t_data->t_ctid);
-			at_chain_start = false;
-			prev_xmax = HeapTupleHeaderGetUpdateXid(heapTuple->t_data);
-		}
-		else
-			break;				/* end of chain */
+		return true;
+	}
+	
+	/*
+	 * Left tuple is invisible, so let's check the right one.
+	 * At this time, offnum of the right side tuple is always
+	 * offnum of the left line pointer + 1.
+	 */
+	offnum += 1;
+
+	if (offnum > MaxHeapTuplesPerPage)
+	{
+		elog(ERROR, "offnum of the right line pointer is too big");
+		return false;
+	}
+	
+	lp = PageGetItemId(dp, offnum);
+	if (!LP_OVR_IS_RIGHT(lp))
+	{
+		elog(ERROR, "item id is not right: %d", lp->lp_oviraptor);
+		return false;
+	}
+	if (LP_OVR_IS_UNUSED(lp))
+	{
+		/* There is only one version in the heap page */
+		return false;
 	}
 
-	return false;
-}
+	/*
+	* Update heapTuple to point to the element of the HOT chain we're
+	* currently investigating. Having t_self set correctly is important
+	* because the SSI checks and the *Satisfies routine for historical
+	* MVCC snapshots need the correct tid to decide about the visibility.
+	* NOTE: I'm not sure if the setting of t_self is necessary now - jongbin
+	*/
+	heapTuple->t_data = (HeapTupleHeader) PageGetItem(dp, lp);
+	heapTuple->t_len = ItemIdGetLength(lp);
+	heapTuple->t_tableOid = RelationGetRelid(relation);
+	ItemPointerSet(&heapTuple->t_self, blkno, offnum);
 
-#else
+	/* If it's visible per the snapshot, we must return it */
+	valid = HeapTupleSatisfiesVisibility(heapTuple, snapshot, buffer);
+	CheckForSerializableConflictOut(valid, relation, heapTuple,
+									buffer, snapshot);
+
+	if (valid)
+	{
+		ItemPointerSetOffsetNumber(tid, offnum);
+		PredicateLockTuple(relation, heapTuple, snapshot);
+		if (all_dead)
+			*all_dead = false;
+
+		return true;
+	}
+
+	/*
+	 * There is no visible version in the heap page. If we are finding a tuple
+	 * for update command, transaction should be aborted by SI. Just returns
+	 * any invisible tuple and exploit the double-checking code in the
+	 * heap_update function.
+	 */
+	if (curr_cmdtype == CMD_UPDATE)
+	{
+		return true;
+	}
+
+	/*
+	 * Two versions in the heap page is invisible for the transaction,
+	 * so now it's time to lookup the version cluster.
+	 */
+	if (relation->rd_indexattr == NULL)
+	{
+		elog(WARNING, "@@ relation->rd_indexattr == NULL");
+		return false;
+	}
+
+	/*
+	 * Get a bitmapset of the primary key of the tuple.
+	 * RelationGetIndexAttrBitmap function calls here recursively
+	 * if the attr is not cached yet. To avoid the infinite
+	 * recursive call, we mark the flag being_read_idxattr here.
+	 */
+	bms_pk = RelationGetIndexAttrBitmap(
+			relation, INDEX_ATTR_BITMAP_PRIMARY_KEY);
+
+	/*
+	 * At this time, we only support a relation having one primary key.
+	 * Some of background process could get into here with a bitmapset
+	 * with size 0, so we ignore that cases.
+	 */
+	if (bms_num_members(bms_pk) != 1)
+	{
+		elog(WARNING, "@@ number of attribute for primary key is not 1");
+		return false;
+	}
+	
+	/*
+	 * Need to add FirstLowInvalidHeapAttributeNumber to get the
+	 * exact attribute number of the primary key.
+	 * See the comment above RelationGetIndexAttrBitmap function.
+	 */
+	attnum_pk = bms_singleton_member(bms_pk) +
+			FirstLowInvalidHeapAttributeNumber;
+
+	/* Retrive the primary key from the old tuple */
+	primary_key = heap_getattr(
+			heapTuple, attnum_pk, relation->rd_att, &is_null);
+	
+	elog(WARNING, "@@ Looking for pkey %d\n", primary_key);
+
+	/* Find the old version from the vcluster */
+	cache_id = VClusterLookupTuple(
+			primary_key, snapshot, &heapTuple->t_data);
+
+	if (VCacheIsValid(cache_id))
+	{
+		if (ret_cache_id == NULL)
+		{
+			/*
+			 * TODO: Need to check if all of the callers could unpin itself.
+			 * (heapam_scan_bitmap_next_block calls this function as well.)
+			 * This should be just a temporal code.
+			 */
+			VCacheUnref(cache_id);
+		}
+		else
+		{
+			/* TODO: Need to check which OID is proper for this */
+			heapTuple->t_tableOid = OID_MAX;
+			/* TODO: Need to check which item pointer is proper for this */
+			ItemPointerSetInvalid(&heapTuple->t_self);
+
+			*ret_cache_id = cache_id;
+		}
+
+		return true;
+	}
+	return false;
+
+#if 0
+		VClusterLookupTuple(primary_key, heapTuple->t_len,
+							snapshot, tmpbuf);
+#endif
+#if 0 // Lookup and verify
+		if (VClusterLookupTuple(primary_key, heapTuple->t_len,
+								snapshot, tmpbuf))
+		{
+			/* Verify it */
+		bool failed = false;
+		char orgbuf[256];
+
+		memset(orgbuf, 0, 256);
+		memcpy(orgbuf, heapTuple->t_data, heapTuple->t_len);
+		for (int i = heapTuple->t_data->t_hoff;
+				i < heapTuple->t_len - heapTuple->t_data->t_hoff; i++)
+		{
+			if (tmpbuf[i] != orgbuf[i])
+			{
+				failed = true;
+				break;
+			}
+		}
+		if (!failed)
+		{
+			ereport(LOG, (errmsg("@@ VCHAIN VERIFIED SUCCESS")));
+		}
+		else
+		{
+		ereport(LOG, (errmsg("@@ VCHAIN VERIFIED FAILED")));
+		ereport(LOG, (errmsg("@@ (%d) org xmin: %d, xmax: %d",
+				primary_key, org_tuple_header->t_choice.t_heap.t_xmin,
+				org_tuple_header->t_choice.t_heap.t_xmax)));
+		ereport(LOG, (errmsg("@@ SNAPSHOT xmin: %d, xmax: %d",
+				snapshot->xmin, snapshot->xmax)));
+		ereport(LOG, (errmsg("HeapTupleHeaderXminCommitted: %d",
+				HeapTupleHeaderXminCommitted(org_tuple_header))));
+		ereport(LOG, (errmsg("HeapTupleHeaderXminFrozen: %d",
+				HeapTupleHeaderXminFrozen(org_tuple_header))));
+		ereport(LOG, (errmsg("XidInMVCCSnapshot(xmax): %d",
+				XidInMVCCSnapshot(
+				org_tuple_header->t_choice.t_heap.t_xmax, snapshot))));
+		ereport(LOG, (errmsg(
+				"tuple->t_infomask & HEAP_XMAX_INVALID: %d",
+				org_tuple_header->t_infomask & HEAP_XMAX_INVALID)));
+		ereport(LOG, (errmsg(
+				"HEAP_XMAX_IS_LOCKED_ONLY(tuple->t_infomask): %d",
+				HEAP_XMAX_IS_LOCKED_ONLY(org_tuple_header->t_infomask))));
+		ereport(LOG, (errmsg(
+				"tuple->t_infomask & HEAP_XMAX_IS_MULTI: %d",
+				org_tuple_header->t_infomask & HEAP_XMAX_IS_MULTI)));
+		ereport(LOG, (errmsg(
+				"tuple->t_infomask & HEAP_XMAX_COMMITTED: %d",
+				org_tuple_header->t_infomask & HEAP_XMAX_COMMITTED)));
+		ereport(LOG, (errmsg("tuple->t_infomask: %d",
+				org_tuple_header->t_infomask)));
+		ereport(LOG, (errmsg("version->t_infomask: %d",
+				(((HeapTupleHeader)(tmpbuf))->t_infomask))));
+		for (int i = 0; i < heapTuple->t_len; i++)
+		{
+			if (tmpbuf[i] == 0) tmpbuf[i] = ' ';
+			if (orgbuf[i] == 0) orgbuf[i] = ' ';
+		}
+		ereport(LOG, (errmsg("@@ tmpbuf: %s, orgbuf(%d): %s",
+				tmpbuf, heapTuple->t_len, orgbuf)));
+
+		for (int j = 0; j < snapshot->xcnt; j++)
+		{
+			ereport(LOG, (errmsg("## snapshot[%d]: %d", j, snapshot->xip[j])));
+		}
+		}
+		}
+		else
+		{
+			ereport(LOG, (errmsg(
+					"@@ VCHAIN NOT FOUND (%d), org xmin: %d, xmax: %d",
+					primary_key, org_tuple_header->t_choice.t_heap.t_xmin,
+					org_tuple_header->t_choice.t_heap.t_xmax)));
+			ereport(LOG, (errmsg("@@ SNAPSHOT xmin: %d, xmax: %d",
+					snapshot->xmin, snapshot->xmax)));
+			ereport(LOG, (errmsg("HeapTupleHeaderXminCommitted: %d",
+					HeapTupleHeaderXminCommitted(org_tuple_header))));
+			ereport(LOG, (errmsg("HeapTupleHeaderXminFrozen: %d",
+					HeapTupleHeaderXminFrozen(org_tuple_header))));
+			ereport(LOG, (errmsg("XidInMVCCSnapshot(xmax): %d",
+					XidInMVCCSnapshot(
+					org_tuple_header->t_choice.t_heap.t_xmax, snapshot))));
+			ereport(LOG, (errmsg(
+					"tuple->t_infomask & HEAP_XMAX_INVALID: %d",
+					org_tuple_header->t_infomask & HEAP_XMAX_INVALID)));
+			ereport(LOG, (errmsg(
+					"HEAP_XMAX_IS_LOCKED_ONLY(tuple->t_infomask): %d",
+					HEAP_XMAX_IS_LOCKED_ONLY(org_tuple_header->t_infomask))));
+		}
+#endif
+}
+#endif
 /*
  *	heap_hot_search_buffer	- search HOT chain for tuple satisfying snapshot
  *
@@ -1988,7 +2010,6 @@ heap_hot_search_buffer(ItemPointer tid, Relation relation, Buffer buffer,
 
 	return false;
 }
-#endif
 
 /*
  *	heap_get_latest_tid -  get the latest tid of a specified tuple
@@ -2208,6 +2229,10 @@ heap_insert(Relation relation, HeapTuple tup, CommandId cid,
 	Buffer		buffer;
 	Buffer		vmbuffer = InvalidBuffer;
 	bool		all_visible_cleared = false;
+#ifndef HYU_LLT
+	Bitmapset	*bms_pk;
+	bool		rel_with_single_pk = false;
+#endif
 
 	/*
 	 * Fill in tuple header fields and toast the tuple if necessary.
@@ -2222,10 +2247,24 @@ heap_insert(Relation relation, HeapTuple tup, CommandId cid,
 	 * this will also pin the requisite visibility map page.
 	 */
 #ifndef HYU_LLT
+	if (relation != NULL && relation->rd_indexattr != NULL)
+	{
+		bms_pk = RelationGetIndexAttrBitmap(
+				relation, INDEX_ATTR_BITMAP_PRIMARY_KEY);
+
+		if (bms_num_members(bms_pk) == 1)
+			rel_with_single_pk = true;
+	}
+
 	 /* Find a buffer having free space for 2 tuples */
-	buffer = RelationGetBufferForTuples(relation, heaptup->t_len,
-									    InvalidBuffer, options, bistate,
-									    &vmbuffer, NULL, 2);
+	if (rel_with_single_pk)
+		buffer = RelationGetBufferForTuples(relation, heaptup->t_len,
+										    InvalidBuffer, options, bistate,
+										    &vmbuffer, NULL, 2);
+	else
+		buffer = RelationGetBufferForTuple(relation, heaptup->t_len,
+										   InvalidBuffer, options, bistate,
+										   &vmbuffer, NULL);
 #else
 	buffer = RelationGetBufferForTuple(relation, heaptup->t_len,
 									   InvalidBuffer, options, bistate,
@@ -2253,8 +2292,13 @@ heap_insert(Relation relation, HeapTuple tup, CommandId cid,
 	START_CRIT_SECTION();
 
 #ifndef HYU_LLT
-	RelationPutHeapTupleWithDummy(relation, buffer, heaptup,
-								  (options & HEAP_INSERT_SPECULATIVE) != 0);
+	if (rel_with_single_pk)
+		RelationPutHeapTupleWithDummy(relation, buffer, heaptup,
+				(options & HEAP_INSERT_SPECULATIVE) != 0);
+	else
+		RelationPutHeapTuple(relation, buffer, heaptup,
+							 (options & HEAP_INSERT_SPECULATIVE) != 0);
+
 #else
 	RelationPutHeapTuple(relation, buffer, heaptup,
 						 (options & HEAP_INSERT_SPECULATIVE) != 0);

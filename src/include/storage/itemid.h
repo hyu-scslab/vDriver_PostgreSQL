@@ -34,8 +34,8 @@ typedef struct ItemIdData
 /* 00: LEFT-USING, 01: RIGHT-USING, 10: LEFT-UNUSED, 11: RIGHT-UNUSED */
 #define LP_OVR_IS_LEFT(itemId)		(!((itemId)->lp_oviraptor & 0x1))
 #define LP_OVR_IS_RIGHT(itemId)		((itemId)->lp_oviraptor & 0x1)
-#define LP_OVR_IS_USING(itemId)		(!((flag)->lp_oviraptor & 0x2))
-#define LP_OVR_IS_UNUSED(itemId)	((flag)->lp_oviraptor & 0x2)
+#define LP_OVR_IS_USING(itemId)		(!((itemId)->lp_oviraptor & 0x2))
+#define LP_OVR_IS_UNUSED(itemId)	((itemId)->lp_oviraptor & 0x2)
 
 #define LP_OVR_SET_LEFT(itemId)		((itemId)->lp_oviraptor &= 0x2)
 #define LP_OVR_SET_RIGHT(itemId)	((itemId)->lp_oviraptor |= 0x1)
