@@ -1685,7 +1685,6 @@ heap_hot_search_buffer_with_vc(ItemPointer tid, Relation relation,
 	 */
 	if (curr_cmdtype == CMD_UPDATE)
 	{
-		elog(WARNING, "@@ CMD_UPDATE cannot find tuple in heap page");
 		return true;
 	}
 

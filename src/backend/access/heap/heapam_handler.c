@@ -2191,8 +2191,6 @@ heapam_scan_bitmap_next_block(TableScanDesc scan,
 		if (bms_num_members(bms_pk) == 1)
 			rel_with_single_pk = true;
 	}
-	elog(WARNING, "@@ heapam_scan_bitmap_next_block, single_pk: %d",
-			rel_with_single_pk);
 #endif
 
 	hscan->rs_cindex = 0;
