@@ -419,6 +419,10 @@ do { \
 	PageAddItemExtendedWithDummy(page, item, size, offsetNumber, \
 							((overwrite) ? PAI_OVERWRITE : 0) | \
 							((is_heap) ? PAI_IS_HEAP : 0))
+
+#define PageAddItemInPlace(page, item, size, offsetNumber) \
+	PageAddItemExtendedInPlace(page, item, size, offsetNumber)
+
 #endif
 #define PageAddItem(page, item, size, offsetNumber, overwrite, is_heap) \
 	PageAddItemExtended(page, item, size, offsetNumber, \
@@ -427,6 +431,16 @@ do { \
 
 extern void PageInit(Page page, Size pageSize, Size specialSize);
 extern bool PageIsVerified(Page page, BlockNumber blkno);
+#ifndef HYU_LLT
+extern OffsetNumber PageAddItemExtendedWithDummy(Page page, Item item,
+												 Size size,
+												 OffsetNumber offsetNumber,
+												 int flags);
+
+extern OffsetNumber PageAddItemExtendedInPlace(Page page, Item item, Size size,
+											   OffsetNumber offsetNumber);
+
+#endif
 extern OffsetNumber PageAddItemExtended(Page page, Item item, Size size,
 										OffsetNumber offsetNumber, int flags);
 extern Page PageGetTempPage(Page page);

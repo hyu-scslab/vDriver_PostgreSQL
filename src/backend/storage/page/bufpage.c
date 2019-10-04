@@ -371,6 +371,116 @@ PageAddItemExtendedWithDummy(Page page,
 	return offsetNumber;
 }
 
+/*
+ *	PageAddItemExtendedInPlace
+ *
+ *	Overwrite an item to a page.  Return value is the offset at which it was
+ *	inserted, or InvalidOffsetNumber if the item is not inserted for any
+ *	reason.  A WARNING is issued indicating the reason for the refusal.
+ *
+ *	offsetNumber must be value between FirstOffsetNumber and one past
+ *	the last existing item, to specify using that particular line pointer.
+ *
+ *	If offsetNumber is valid, we just store the  item at the specified
+ *  offsetNumber, which must be either a currently-unused line pointer,
+ *  or one past the last existing item.
+ *
+ *	If offsetNumber is not valid, then returns InvalidOffsetNumber.
+ *
+ *	!!! EREPORT(ERROR) IS DISALLOWED HERE !!!
+ */
+OffsetNumber
+PageAddItemExtendedInPlace(Page page,
+						   Item item,
+						   Size size,
+						   OffsetNumber offsetNumber)
+{
+	PageHeader	phdr = (PageHeader) page;
+	Size		alignedSize;
+	ItemId		itemId;
+	OffsetNumber limit;
+
+	/*
+	 * Be wary about corrupted page pointers
+	 */
+	if (phdr->pd_lower < SizeOfPageHeaderData ||
+		phdr->pd_lower > phdr->pd_upper ||
+		phdr->pd_upper > phdr->pd_special ||
+		phdr->pd_special > BLCKSZ)
+		ereport(PANIC,
+				(errcode(ERRCODE_DATA_CORRUPTED),
+				 errmsg("corrupted page pointers: lower = %u, upper = %u, special = %u",
+						phdr->pd_lower, phdr->pd_upper, phdr->pd_special)));
+
+	/*
+	 * Select offsetNumber to place the new item at
+	 */
+	limit = OffsetNumberNext(PageGetMaxOffsetNumber(page));
+
+	/* was offsetNumber passed in? */
+	if (OffsetNumberIsValid(offsetNumber))
+	{
+		if (offsetNumber < limit)
+		{
+			itemId = PageGetItemId(phdr, offsetNumber);
+			if (!ItemIdHasStorage(itemId))
+			{
+				elog(WARNING, "no storage for overwrite");
+				return InvalidOffsetNumber;
+			}
+		}
+		else
+		{
+			return InvalidOffsetNumber;
+		}
+	}
+	else
+	{
+		return InvalidOffsetNumber;
+	}
+
+	/* Reject placing items beyond heap boundary, if heap */
+	if (offsetNumber > MaxHeapTuplesPerPage)
+	{
+		elog(WARNING, "can't put more than MaxHeapTuplesPerPage items in a heap page");
+		return InvalidOffsetNumber;
+	}
+
+	if (itemId->lp_off < phdr->pd_lower)
+	{
+		elog(WARNING, "line pointer has invalid offset");
+		return InvalidOffsetNumber;
+	}
+
+	alignedSize = MAXALIGN(size);
+	if (size != itemId->lp_len)
+	{
+		elog(WARNING, "size is different, org: %d, new: %d",
+				itemId->lp_len, size);
+		return InvalidOffsetNumber;
+	}
+
+	/*
+	 * Items normally contain no uninitialized bytes.  Core bufpage consumers
+	 * conform, but this is not a necessary coding rule; a new index AM could
+	 * opt to depart from it.  However, data type input functions and other
+	 * C-language functions that synthesize datums should initialize all
+	 * bytes; datumIsEqual() relies on this.  Testing here, along with the
+	 * similar check in printtup(), helps to catch such mistakes.
+	 *
+	 * Values of the "name" type retrieved via index-only scans may contain
+	 * uninitialized bytes; see comment in btrescan().  Valgrind will report
+	 * this as an error, but it is safe to ignore.
+	 */
+	VALGRIND_CHECK_MEM_IS_DEFINED(item, size);
+
+	/* copy the item's data onto the page */
+	memcpy((char *)page + ItemIdGetOffset(itemId), item, size);
+
+	return offsetNumber;
+}
+
+
 #endif
 /*
  *	PageAddItemExtended

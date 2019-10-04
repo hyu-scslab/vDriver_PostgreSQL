@@ -178,10 +178,6 @@ index_insert(Relation indexRelation,
 	static int t = 0;
 	RELATION_CHECKS;
 	CHECK_REL_PROCEDURE(aminsert);
-	if (t == 0) {
-		t = 1;
-		//sleep(10);
-	}
 
 	if (!(indexRelation->rd_indam->ampredlocks))
 		CheckForSerializableConflictIn(indexRelation,

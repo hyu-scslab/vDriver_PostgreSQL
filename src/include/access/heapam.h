@@ -158,6 +158,13 @@ extern TM_Result heap_delete(Relation relation, ItemPointer tid,
 							 struct TM_FailureData *tmfd, bool changingPart);
 extern void heap_finish_speculative(Relation relation, ItemPointer tid);
 extern void heap_abort_speculative(Relation relation, ItemPointer tid);
+#ifndef HYU_LLT
+extern TM_Result heap_update_with_vc(Relation relation, ItemPointer otid,
+									 HeapTuple newtup, CommandId cid,
+									 Snapshot crosscheck, bool wait,
+									 TM_FailureData *tmfd,
+									 LockTupleMode *lockmode);
+#endif
 extern TM_Result heap_update(Relation relation, ItemPointer otid,
 							 HeapTuple newtup,
 							 CommandId cid, Snapshot crosscheck, bool wait,

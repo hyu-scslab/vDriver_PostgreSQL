@@ -390,13 +390,35 @@ heapam_tuple_update(Relation relation, ItemPointer otid, TupleTableSlot *slot,
 	bool		shouldFree = true;
 	HeapTuple	tuple = ExecFetchSlotHeapTuple(slot, true, &shouldFree);
 	TM_Result	result;
+#ifndef HYU_LLT
+	Bitmapset  *bms_pk;
+	bool		rel_with_single_pk = false;
+#endif
 
 	/* Update the tuple with table oid */
 	slot->tts_tableOid = RelationGetRelid(relation);
 	tuple->t_tableOid = slot->tts_tableOid;
 
+#ifndef HYU_LLT
+	if (relation != NULL && relation->rd_indexattr != NULL)
+	{
+		bms_pk = RelationGetIndexAttrBitmap(
+				relation, INDEX_ATTR_BITMAP_PRIMARY_KEY);
+
+		if (bms_num_members(bms_pk) == 1)
+			rel_with_single_pk = true;
+	}
+
+	if (rel_with_single_pk)
+		result = heap_update_with_vc(relation, otid, tuple, cid, crosscheck,
+									 wait, tmfd, lockmode);
+	else
+		result = heap_update(relation, otid, tuple, cid, crosscheck, wait,
+							 tmfd, lockmode);
+#else
 	result = heap_update(relation, otid, tuple, cid, crosscheck, wait,
 						 tmfd, lockmode);
+#endif
 	ItemPointerCopy(&tuple->t_self, &slot->tts_tid);
 
 	/*
@@ -407,7 +429,14 @@ heapam_tuple_update(Relation relation, ItemPointer otid, TupleTableSlot *slot,
 	 *
 	 * If it's a HOT update, we mustn't insert new index entries.
 	 */
+#ifndef HYU_LLT
+	 if (rel_with_single_pk)
+		*update_indexes = false;
+	else
+		*update_indexes = result == TM_Ok && !HeapTupleIsHeapOnly(tuple);
+#else
 	*update_indexes = result == TM_Ok && !HeapTupleIsHeapOnly(tuple);
+#endif
 
 	if (shouldFree)
 		pfree(tuple);

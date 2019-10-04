@@ -72,6 +72,58 @@ RelationPutHeapTupleWithDummy(Relation relation,
 	}
 }
 
+/*
+ * RelationPutHeapTupleInPlace
+ *
+ * place tuple at specified page, specified offset
+ * !!! EREPORT(ERROR) IS DISALLOWED HERE !!!  Must PANIC on failure!!!
+ *
+ * Note - caller must hold BUFFER_LOCK_EXCLUSIVE on the buffer.
+ */
+void
+RelationPutHeapTupleInPlace(Relation relation,
+							Buffer buffer,
+							OffsetNumber offnum,
+							HeapTuple tuple,
+							bool token)
+{
+	Page		pageHeader;
+
+	/*
+	 * A tuple that's being inserted speculatively should already have its
+	 * token set.
+	 */
+	Assert(!token || HeapTupleHeaderIsSpeculative(tuple->t_data));
+
+	/* Add the tuple to the page */
+	pageHeader = BufferGetPage(buffer);
+
+	offnum = PageAddItemInPlace(pageHeader, (Item) tuple->t_data,
+								tuple->t_len, offnum);
+
+	if (offnum == InvalidOffsetNumber)
+	{
+		elog(PANIC, "failed to overwrite tuple to page in place");
+	}
+
+	/* Update tuple->t_self to the actual position where it was stored */
+	ItemPointerSet(&(tuple->t_self), BufferGetBlockNumber(buffer), offnum);
+
+	/*
+	 * Insert the correct position into CTID of the stored tuple, too (unless
+	 * this is a speculative insertion, in which case the token is held in
+	 * CTID field instead)
+	 */
+	if (!token)
+	{
+		ItemId		itemId = PageGetItemId(pageHeader, offnum);
+		HeapTupleHeader item = (HeapTupleHeader) PageGetItem(pageHeader, itemId);
+
+		item->t_ctid = tuple->t_self;
+	}
+}
+
+
 #endif
 /*
  * RelationPutHeapTuple - place tuple at specified page
