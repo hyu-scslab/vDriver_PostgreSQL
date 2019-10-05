@@ -56,8 +56,6 @@ ThreadTableInit(void)
 {
 	bool		foundDesc;
 
-	//assert(PROCARRAY_MAXPROCS < THREAD_TABLE_SIZE);
-
 	thread_table_desc = (ThreadTableDesc*)
 		ShmemInitStruct("Thread Table Descriptor",
 						sizeof(ThreadTableDesc), &foundDesc);
@@ -65,43 +63,155 @@ ThreadTableInit(void)
 	/* Initialize thread table */
 	for (int i = 0; i < THREAD_TABLE_SIZE; i++)
 	{
-		thread_table_desc->thread_table[i].timestamp = TS_NONE;
+		/* Init timestamp table */
+		thread_table_desc->timestamp_table[i].timestamp = TS_NONE;
+
+		/* Init snapshot table */
+		for (int j = 0; j < SNAPSHOT_SIZE; j++) {
+			thread_table_desc->snapshot_table[i].snapshot[j] = 0;
+		}
+		thread_table_desc->snapshot_table[i].xmax = 0;
 	}
 }
 
+/*
+ * SetSnapshot
+ *
+ * Copy snapshot on snap table.
+ * Caller HAVE TO hold ProcArrayLock(shared).
+ */
+void
+SetSnapshot(TransactionId*	snapshot,
+		    int				cnt,
+			TransactionId	xmax)
+{
+	int					index;
+	SnapshotTable		snapshot_table;
+	SnapshotTableNode*	node;
+
+	assert(cnt <= SNAPSHOT_SIZE);
+
+	index = MyProc->pgprocno;
+	snapshot_table = thread_table_desc->snapshot_table;
+	node = &snapshot_table[index];
+
+	/* Copy snapshot. */
+	for (int i = 0; i < cnt; i++) {
+		node->snapshot[i] = snapshot[i];
+	}
+	node->cnt = cnt;
+	node->xmax = xmax;
+}
+
+/*
+ * ClearSnapshot
+ *
+ * Clear snapshot.
+ * Caller HAVE TO hold ProcArrayLock(shared).
+ */
+void
+ClearSnapshot(void)
+{
+	int					index;
+	SnapshotTable		snapshot_table;
+	SnapshotTableNode*	node;
+
+	index = MyProc->pgprocno;
+	snapshot_table = thread_table_desc->snapshot_table;
+	node = &snapshot_table[index];
+
+	/* Clear snapshot. */
+	/* Maybe it is sufficient to update only cnt. */
+	node->cnt = 0;
+}
+
+/*
+ * AllocSnapshotTable
+ *
+ * Allocation variable for snapshot table.
+ * It may be used to copy snapshot table.
+ */
+SnapshotTable
+AllocSnapshotTable(void)
+{
+	SnapshotTable table = (SnapshotTable) malloc(
+			sizeof(SnapshotTableNode) * THREAD_TABLE_SIZE);
+	
+	return table;
+}
+
+/*
+ * FreeSnapshotTable
+ *
+ * Free snapshot table.
+ */
+void
+FreeSnapshotTable(SnapshotTable table)
+{
+	free(table);
+}
+
+/*
+ * CopySnapshotTable
+ *
+ * Copy snapshot table to table(parameter).
+ * ProcArrayLock(exclusive) is holded in this function.
+ */
+void
+CopySnapshotTable(SnapshotTable table)
+{
+	SnapshotTable		snapshot_table;
+
+	snapshot_table = thread_table_desc->snapshot_table;
+
+	LWLockAcquire(ProcArrayLock, LW_EXCLUSIVE);
+
+	/* FIXME: is it posibble??
+	 * *table = *snapshot_table */
+	for (int i = 0; i < THREAD_TABLE_SIZE; i++) {
+		for (int j = 0; j < SNAPSHOT_SIZE; j++) {
+			table[i].snapshot[j] = snapshot_table[i].snapshot[j];
+		}
+		table[i].cnt = snapshot_table[i].cnt;
+		table[i].xmax = snapshot_table[i].xmax;
+	}
+
+
+	LWLockRelease(ProcArrayLock);
+}
 
 /*
  * SetTimestamp
  *
- * Set caller's timestamp on thread table.
+ * Set caller's timestamp on timestamp table.
  */
 void
 SetTimestamp(void)
 {
 	int index = MyProc->pgprocno;
-	ThreadTable thread_table = thread_table_desc->thread_table;
+	TimestampTable timestamp_table = thread_table_desc->timestamp_table;
 
-	thread_table[index].timestamp = GetCurrentTimestamp();
+	timestamp_table[index].timestamp = GetCurrentTimestamp();
 }
 
 /*
  * ClearTimestamp
  *
- * Clear caller's timestamp on thread table.
+ * Clear caller's timestamp on timestamp table.
  */
 void
 ClearTimestamp(void)
 {
 	int index = MyProc->pgprocno;
-	ThreadTable thread_table = thread_table_desc->thread_table;
+	TimestampTable timestamp_table = thread_table_desc->timestamp_table;
 
-	thread_table[index].timestamp = TS_NONE;
+	timestamp_table[index].timestamp = TS_NONE;
 }
 
 /*
  * GetMinimumTimestamp
  *
- * Return the minimum timestamp from thread table.
+ * Return the minimum timestamp from timestamp table.
  * If timestamp of a object is smaller than GetMinimumTimestamp(), 
  * we can be sure that any other processes can't see the object.
  */
@@ -114,7 +224,7 @@ GetMinimumTimestamp(void)
 	for (int i = 0; i < THREAD_TABLE_SIZE; i++)
 	{
 		TimestampTz ts;
-		ts = thread_table_desc->thread_table[i].timestamp;
+		ts = thread_table_desc->timestamp_table[i].timestamp;
 
 		if (ts == TS_NONE)
 			continue;

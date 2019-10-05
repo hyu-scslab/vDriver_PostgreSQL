@@ -34,6 +34,10 @@
 #include "libpq/pqsignal.h"
 
 #include "storage/vcluster.h"
+#include "storage/thread_table.h"
+#ifdef HYU_LLT_STAT
+#include "storage/vstatistic.h"
+#endif
 
 #include "storage/dead_zone.h"
 
@@ -44,7 +48,14 @@ DeadZoneDesc*	dead_zone_desc;
 
 /* local functions */
 static void DeadZoneUpdaterProcessMain(void);
+static TransactionId MinInSnapshot(
+		SnapshotTableNode*	snapshot,
+		TransactionId		after);
+static void CalculateDeadZone(
+		DeadZoneDesc*	desc,
+		SnapshotTable	table);
 
+static bool IsInDeadZone(TransactionId xmin, TransactionId xmax);
 
 
 
@@ -79,7 +90,7 @@ DeadZoneInit(void)
 		ShmemInitStruct("Dead Zone Descriptor",
 						sizeof(DeadZoneDesc), &foundDesc);
 
-	dead_zone_desc->dead_zone = 0;
+	dead_zone_desc->cnt = 0;
 }
 
 /*
@@ -109,51 +120,200 @@ StartDeadZoneUpdater(void)
 }
 
 /*
+ * MinInSnapshot
+ *
+ * Minimum xmin in snapshot bigger than after.
+ */
+static TransactionId
+MinInSnapshot(SnapshotTableNode*	snapshot,
+			  TransactionId			after)
+{
+	TransactionId	min_xid;
+	TransactionId	xid;
+
+	if (snapshot->cnt == 0) {
+		return 0;
+	}
+
+	min_xid = snapshot->xmax;
+	for (int i = 0; i < snapshot->cnt; i++) {
+		xid = snapshot->snapshot[i];
+		if (xid > after && xid < min_xid) {
+			min_xid = xid;
+		}
+	}
+
+	return min_xid;
+}
+
+/*
+ * CalculateDeadZone
+ *
+ * Calculate dead zone by snapshot table.
+ */
+static void
+CalculateDeadZone(DeadZoneDesc*	desc,
+				  SnapshotTable	table)
+{
+	SnapshotTableNode	temp; /* for swap */
+	TransactionId		max_xmax;
+	int					max_index;
+	SnapshotTableNode*	prev_snapshot;
+	SnapshotTableNode*	next_snapshot;
+	TransactionId		left;
+	TransactionId		right;
+
+	/* Sort snapshot table by xmax. */
+	/* selection sort */
+	for (int i = 0; i < THREAD_TABLE_SIZE; i++) {
+		max_index = i;
+		max_xmax = PG_UINT32_MAX;
+		for (int j = i; j < THREAD_TABLE_SIZE; j++) {
+			if (table[j].cnt != 0 /* except empty node */
+					&& table[j].xmax < max_xmax) {
+				max_xmax = table[j].xmax;
+				max_index = j;
+			}
+		}
+
+		if (i != max_index) {
+			temp = table[i];
+			table[i] = table[max_index];
+			table[max_index] = temp;
+		}
+		if (max_xmax == PG_UINT32_MAX) {
+			/* Nothing to sort anymore. */
+			break;
+		}
+	}
+
+	/* Calculate first zone. */
+	if (table[0].cnt == 0) {
+		/* No snapshot */
+		desc->cnt = 0;
+		return;
+	}
+
+	desc->dead_zones[0].left = 0;
+	desc->dead_zones[0].right = MinInSnapshot(&table[0], 0);
+	desc->cnt = 1;
+
+	/* Calculate other zones. */
+	for (int i = 1; i < THREAD_TABLE_SIZE; i++) {
+		prev_snapshot = &table[i - 1];
+		next_snapshot = &table[i];
+		if (next_snapshot->cnt == 0) {
+			break;
+		}
+
+		left = prev_snapshot->xmax;
+		right = MinInSnapshot(next_snapshot, left);
+
+		desc->dead_zones[i].left = left;
+		desc->dead_zones[i].right = right;
+
+		desc->cnt = i + 1;
+	}
+}
+
+/*
  * SetDeadZone
  *
- * TODO: need to represent dead zone more specific.
- * TODO: it is very naive implement!!
+ * Calculate dead zone and notice it.
  */
 void
 SetDeadZone(void)
 {
-	/* TODO: Now, we just set dead zone by oldest active trx id. */
+	SnapshotTable table;
+	DeadZoneDesc* local_dead_zone_desc;
 
-	dead_zone_desc->dead_zone = GetOldestActiveTransactionId() - 50000;
+	/* Copy snapshot table to my local table. */
+	table = AllocSnapshotTable();
+	CopySnapshotTable(table);
+
+	/* Let's calculate dead zone. */
+	local_dead_zone_desc = 
+		(DeadZoneDesc*) malloc(sizeof(DeadZoneDesc));
+	CalculateDeadZone(local_dead_zone_desc, table);
+
+	/* Notice new dead zone. */
+	LWLockAcquire(DeadZoneLock, LW_EXCLUSIVE);
+	*dead_zone_desc = *local_dead_zone_desc;
+	LWLockRelease(DeadZoneLock);
+
+	/* Free local data. */
+	FreeSnapshotTable(table);
+	free(local_dead_zone_desc);
 }
-
 
 /*
- * GetDeadZone
+ * RecIsInDeadZone
  *
- * TODO: need to represent dead zone more specific.
- * TODO: it is very naive implement!!
+ * Wrapper function for record.
  */
-TransactionId
-GetDeadZone(void)
+bool
+RecIsInDeadZone(TransactionId xmin, TransactionId xmax)
 {
-	return dead_zone_desc->dead_zone;
+	if (xmax < RecentGlobalXmin + vacuum_defer_cleanup_age) {
+		/* It's optimized-zone1-range. */
+#ifdef HYU_LLT_STAT
+		__sync_fetch_and_add(&vstatistic_desc->cnt_gmin_prune, 1);
+#endif
+		return true;
+	}
+	if (IsInDeadZone(xmin, xmax)) {
+		/* Calculated-dead-zone. */
+#ifdef HYU_LLT_STAT
+		__sync_fetch_and_add(&vstatistic_desc->cnt_first_prune, 1);
+#endif
+		return true;
+	}
+
+	return false;
 }
 
+/*
+ * RecIsInDeadZone
+ *
+ * Wrapper function for segment.
+ */
+bool
+SegIsInDeadZone(TransactionId xmin, TransactionId xmax)
+{
+	if (xmax < RecentGlobalXmin + vacuum_defer_cleanup_age) {
+		/* It's optimized-zone1-range. */
+		return true;
+	}
+	if (IsInDeadZone(xmin, xmax)) {
+		/* Calculated-dead-zone. */
+		return true;
+	}
+
+	return false;
+}
 
 /*
  * IsInDeadZone
  *
  * Decide whether this version(record, segment desc) is dead or not.
  * We only judge by dead zone, xmin and xmax.
- * TODO: it is very naive implement!!
  */
-bool
+static bool
 IsInDeadZone(TransactionId xmin, TransactionId xmax)
 {
 	bool ret = false;
 
 	assert(xmin <= xmax);
 
-	if (xmax < GetDeadZone())
-		ret = true;
-	else
-		ret = false;
+	LWLockAcquire(DeadZoneLock, LW_SHARED);
+	for (int i = 0; i < dead_zone_desc->cnt; i++) {
+		DeadZone* dead_zone = &dead_zone_desc->dead_zones[i];
+		if (xmin > dead_zone->left && xmax < dead_zone->right) {
+			ret = true;
+			break;
+		}
+	}
+	LWLockRelease(DeadZoneLock);
 
 	return ret;
 }
@@ -179,10 +339,11 @@ DeadZoneUpdaterProcessMain(void)
 	BaseInit();
 	InitProcess();
 
+	/* Main routine */
 	for (;;) {
-		elog(WARNING, "HYU_LLT : updater looping..");
+		//elog(WARNING, "HYU_LLT : updater looping..");
 		SetDeadZone();
-		sleep(1);
+		sleep(INTERVAL_UPDATE_DEADZONE);
 	}
 }
 

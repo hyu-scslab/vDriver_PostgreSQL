@@ -18,8 +18,14 @@
 
 #include "storage/lwlock.h"
 #include "storage/shmem.h"
+#include "storage/standby.h"
+
 #include "storage/vchain_hash.h"
 #include "storage/thread_table.h"
+#ifdef HYU_LLT_STAT
+#include "storage/dead_zone.h"
+#include "storage/vstatistic.h"
+#endif /* HYU_LLT_STAT */
 
 #include "storage/vchain.h"
 
@@ -89,6 +95,7 @@ VChainLookupLocator(PrimaryKey primary_key,
 
 	/* Set epoch */
 	SetTimestamp();
+	pg_memory_barrier();
 
 	chain = (VLocator *)dsa_get_address(dsa_vcluster, dsap_chain);
 	if (chain->dsap_prev == chain->dsap)
@@ -96,6 +103,7 @@ VChainLookupLocator(PrimaryKey primary_key,
 		/* There is a hash entry, but the version chain is empty */
 
 		/* Clear epoch */
+		pg_memory_barrier();
 		ClearTimestamp();
 
 		return false;
@@ -115,6 +123,7 @@ VChainLookupLocator(PrimaryKey primary_key,
 			*ret_locator = locator;
 
 			/* Clear epoch */
+			pg_memory_barrier();
 			ClearTimestamp();
 
 			return true;
@@ -125,6 +134,7 @@ VChainLookupLocator(PrimaryKey primary_key,
 	/* Fail to find a visible version */
 
 	/* Clear epoch */
+	pg_memory_barrier();
 	ClearTimestamp();
 
 	return false;
@@ -210,7 +220,50 @@ retry:
 
 	if (flag == VL_DELETE) {
 		/* 5) Cutter have visited hear. Delete this node logically for cutter. */
-		VChainFixUpOne(tail_prev);
+
+		/* We must consider that prev of this node can be updated by vCutter. */
+		/* It's a little corner case. */
+		/* Protocol in hear is very simillar with above one. */
+		VLocator		*victim;
+		dsa_pointer		dsap_victim_prev;
+		VLocator		*victim_prev;
+		VLocatorFlag	flag;
+
+		/* 5-1) Get victim node. */
+		victim = tail_prev;
+
+get_prev:
+		/* 5-2) Get prev of victim. */
+		dsap_victim_prev = victim->dsap_prev;
+		victim_prev = (VLocator *)dsa_get_address(dsa_vcluster, dsap_victim_prev);
+
+		/* 5-3) Let's play test-and-set. */
+		flag = __sync_lock_test_and_set(&victim_prev->flag, VL_APPEND);
+		if (flag == VL_DELETE) {
+			/* I'm loser.. Spin until victim's prev is updated by vCutter. */
+			while (dsap_victim_prev == __sync_fetch_and_add(&victim->dsap_prev, 0)) {
+				/* LLB TODO: Need to sleep a little?? */
+				;
+			}
+			
+			/* Retry until i'm winner */
+			goto get_prev;
+		}
+
+		/* 5-4) Delete victim. */
+		VChainFixUpOne(victim);
+
+		/* 5-5) Check vCutter has visited at prev. */
+		flag = __sync_lock_test_and_set(&victim_prev->flag, VL_WINNER);
+		if (flag == VL_DELETE) {
+			/* vCutter has visited at prev node. */
+			/* We have to delete prev node for vCutter. */
+			/* Make prev node new victim and return to above. */
+			victim = victim_prev;
+			goto get_prev;
+		}
+		
+		/* Phew... It's all done.. */
 	}
 
 	/* End the consensus protocol. */
@@ -246,6 +299,9 @@ VChainFixUpOne(VLocator* mid)
 
 	/* Set timestamp */
 	mid->timestamp = GetCurrentTimestamp();
+#ifdef HYU_LLT_STAT
+	__sync_fetch_and_add(&vstatistic_desc->cnt_logical_deleted, 1);
+#endif
 }
 
 #endif /* HYU_LLT */

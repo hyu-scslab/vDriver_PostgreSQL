@@ -30,11 +30,16 @@
 #include "storage/ipc.h"
 #include "storage/sinvaladt.h"
 #include "libpq/pqsignal.h"
+#include "storage/standby.h"
 
 #include "storage/vcache.h"
 #include "storage/vchain.h"
 #include "storage/thread_table.h"
 #include "storage/dead_zone.h"
+#ifdef HYU_LLT_STAT
+#include "storage/vstatistic.h"
+#endif /* HYU_LLT_STAT */
+
 #include "storage/vcluster.h"
 
 /* vcluster descriptor in shared memory*/
@@ -72,6 +77,9 @@ VClusterShmemSize(void)
 	size = add_size(size, VChainShmemSize());
 	size = add_size(size, ThreadTableShmemSize());
 	size = add_size(size, DeadZoneShmemSize());
+#ifdef HYU_LLT_STAT
+	size = add_size(size, VStatisticShmemSize());
+#endif /* HYU_LLT_STAT */
 
 	return size;
 }
@@ -90,6 +98,9 @@ VClusterShmemInit(void)
 	VChainInit();
 	ThreadTableInit();
 	DeadZoneInit();
+#ifdef HYU_LLT_STAT
+	VStatisticInit();
+#endif /* HYU_LLT_STAT */
 	
 	vclusters = (VClusterDesc *)
 		ShmemInitStruct("VCluster Descriptor",
@@ -139,7 +150,7 @@ StartGC(void)
 {
 	pid_t		gc_pid;
 
-	/* Start a cutter process. */
+	/* Start a garbage collector process. */
 	gc_pid = fork_process();
 	if (gc_pid == -1) {
 		/* error */
@@ -291,6 +302,14 @@ VClusterAppendTuple(VCLUSTER_TYPE cluster_type,
 		   cluster_type == VCLUSTER_LLT);
 
 	Assert(dsa_vcluster != NULL);
+#ifdef HYU_LLT_STAT
+	__sync_fetch_and_add(&vstatistic_desc->cnt_inserted, 1);
+#endif
+
+	/* First prune. */
+	if (RecIsInDeadZone(xmin, xmax)) {
+		return;
+	}
 
 	aligned_tuple_size = 1 << my_log2(tuple_size);
 
@@ -298,6 +317,7 @@ retry:
 
 	/* Set epoch */
 	SetTimestamp();
+	pg_memory_barrier();
 
 	/*
 	 * The order of reading the segment id and the reserved segment id
@@ -392,6 +412,7 @@ retry:
 		pg_memory_barrier();
 
 		/* Clear epoch */
+		pg_memory_barrier();
 		ClearTimestamp();
 		goto retry;
 	}
@@ -406,6 +427,7 @@ retry:
 	}
 
 	/* Clear epoch */
+	pg_memory_barrier();
 	ClearTimestamp();
 }
 
@@ -559,12 +581,11 @@ start_from_head:
 			goto next;
 		}
 
-		if (!IsInDeadZone(victim->xmin, victim->xmax)) {
+		if (!SegIsInDeadZone(victim->xmin, victim->xmax)) {
 			/* It is not dead. */
 			goto next;
 		}
 
-		elog(WARNING, "HYU_LLT : cut %u %u", victim->xmin, victim->xmax);
 		/* We can cut this segment. */
 		CutSegment(victim);
 
@@ -593,9 +614,13 @@ start_from_head:
 		/* Second, update next of old tail to victim. */
 		old_tail->next = dsap_victim;
 
-		/* OK. Set timestamp. Any vCutter and vSorter
+		/* OK. Set timestamp. Any vSorter
 		 * after this timestamp never see this victim node. */
+		pg_memory_barrier();
 		victim->timestamp = GetCurrentTimestamp();
+#ifdef HYU_LLT_STAT
+		__sync_fetch_and_add(&vstatistic_desc->cnt_seg_logical_deleted, 1);
+#endif
 
 		if (dsap_victim_prev == 0) {
 			/* Old head is deleted, so let's start from new head. */
@@ -654,18 +679,17 @@ VClusterCutProcessMain(void)
 	InitProcess();
 
 	for (;;) {
-		elog(WARNING, "HYU_LLT : cutter looping..");
 		for (VCLUSTER_TYPE type = 0; type < VCLUSTER_NUM; type++) {
 			CutVSegDesc(type);
 		}
-		sleep(1);
+		sleep(0.01);
 	}
 }
 
 /*
  * GarbageCollect
  *
- * Iterate garbage list and free node if the node is never accessible.
+ * Get head of garbage list and free it if it is never accessible by others.
  * Accessiblility is known by checking timestamp.
  * If a node's timestamp < GetMinimumTimestamp(), it is safe to free.
  * We assume that garbage list is accessed by only ONE producer(cutter)
@@ -676,63 +700,57 @@ static void
 GarbageCollect(VCLUSTER_TYPE cluster_type)
 {
 	dsa_pointer		dsap_victim;
-	dsa_pointer		dsap_victim_prev;
+	dsa_pointer		dsap_head;
 	VSegmentDesc*	victim;
-	VSegmentDesc*	victim_prev;
+	VSegmentDesc*	head;
 	TimestampTz		min_ts;
 
+	/* Head is dummy node. */
+	dsap_head = vclusters->garbage_list_head[cluster_type];
+	head = (VSegmentDesc *)dsa_get_address(
+			dsa_vcluster, dsap_head);
 
-	dsap_victim = 0;
-	victim = NULL;
-	dsap_victim_prev = vclusters->garbage_list_head[cluster_type];
-	victim_prev = (VSegmentDesc *)dsa_get_address(
-			dsa_vcluster, dsap_victim_prev);
+	dsap_victim = head->next;
 
-	for (;;) {
-		dsap_victim = victim_prev->next;
-
-		if (dsap_victim == 0) {
-			/* No more node. */
-			goto end;
-		}
-
-		victim = (VSegmentDesc *)dsa_get_address(
-				dsa_vcluster, dsap_victim);
-
-		/* Get minimum timestamp in thread table. */
-		min_ts = GetMinimumTimestamp();
-		
-		/* Check timestamp of vseg desc. */
-		if (victim->timestamp >= min_ts) {
-			/* This vseg desc is accessible by other process. It's not safe to free. */
-			goto next;
-		}
-
-		/* Check timestamp of vlocators. */
-		for (int i = 0; i < VCLUSTER_SEG_NUM_ENTRY; i++) {
-			TimestampTz ts;
-			ts = victim->locators[i].timestamp;
-			if (ts >= min_ts || ts == TS_NONE) {
-				/* This vlocator is accessible by other process. It's not safe to free. */
-				goto next;
-			}
-		}
-
-		/* Link prev to next. */
-		victim_prev->next = victim->next;
-
-		/* OK. Let's free it. */
-		dsa_free(dsa_vcluster, dsap_victim);
-
-		dsap_victim = dsap_victim_prev;
-		victim = victim_prev;
-
-next:
-		/* Move to next node. */
-		dsap_victim_prev = dsap_victim;
-		victim_prev = victim;
+	if (dsap_victim == 0) {
+		/* No node. */
+		goto end;
 	}
 
+	/* Get victim from head->next. */
+	victim = (VSegmentDesc *)dsa_get_address(
+			dsa_vcluster, dsap_victim);
+
+	/* Get minimum timestamp in thread table. */
+	min_ts = GetMinimumTimestamp();
+	
+	/* Check timestamp of vseg desc. */
+	if (victim->timestamp >= min_ts) {
+		/* This vseg desc is accessible by other process. It's not safe to free. */
+		goto end;
+	}
+
+	/* Check timestamp of vlocators. */
+	for (int i = 0; i < VCLUSTER_SEG_NUM_ENTRY; i++) {
+		TimestampTz ts;
+		ts = victim->locators[i].timestamp;
+		if (ts >= min_ts || ts == TS_NONE) {
+			/* This vlocator is accessible by other process. It's not safe to free. */
+			goto end;
+		}
+	}
+
+	/* OK. It's safe to free, but now we just make victim new head and free old head. */
+	/* Update head. */
+	/* Victim become new head. */
+	vclusters->garbage_list_head[cluster_type] = dsap_victim;
+
+	/* OK. Let's free old head. */
+	dsa_free(dsa_vcluster, dsap_head);
+
+#ifdef HYU_LLT_STAT
+	__sync_fetch_and_add(&vstatistic_desc->cnt_seg_physical_deleted, 1);
+#endif
 end:
 	return;
 }
@@ -759,12 +777,10 @@ GCProcessMain(void)
 	InitProcess();
 
 	for (;;) {
-		elog(WARNING, "HYU_LLT : gc looping..");
 		for (VCLUSTER_TYPE type = 0; type < VCLUSTER_NUM; type++) {
 			GarbageCollect(type);
 		}
-
-		sleep(1);
+		sleep(0.01);
 	}
 }
 

@@ -14,16 +14,32 @@
 
 #include "c.h"
 #include "utils/dsa.h"
-#include "utils/snapshot.h"
 #include "utils/snapmgr.h"
 #include "utils/timestamp.h"
 
+#include "storage/thread_table.h"
+
+#define DEAD_ZONE_SIZE	(SNAPSHOT_SIZE)
+
+#ifndef INTERVAL_UPDATE_DEADZONE
+#define INTERVAL_UPDATE_DEADZONE	(1)
+#endif
 
 
+typedef struct {
+	/* Lower bound */
+	TransactionId		left;
+
+	/* Upper bound */
+	TransactionId		right;
+} DeadZone;
 
 /* dead zone descriptor */
+/* Dead zone is protected by DeadZoneLock(rw lock). */
+/* DeadZoneLock is defined in lwlocknames.txt */
 typedef struct {
-	TransactionId		dead_zone;
+	DeadZone			dead_zones[DEAD_ZONE_SIZE];
+	int					cnt;
 } DeadZoneDesc;
 
 
@@ -37,7 +53,9 @@ extern pid_t StartDeadZoneUpdater(void);
 
 extern void SetDeadZone(void);
 extern TransactionId GetDeadZone(void);
-extern bool IsInDeadZone(TransactionId xmin,
+extern bool RecIsInDeadZone(TransactionId xmin,
+						 TransactionId xmax);
+extern bool SegIsInDeadZone(TransactionId xmin,
 						 TransactionId xmax);
 
 

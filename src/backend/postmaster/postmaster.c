@@ -134,7 +134,10 @@
 #ifdef HYU_LLT
 #include "storage/vcluster.h"
 #include "storage/dead_zone.h"
-#endif
+#ifdef HYU_LLT_STAT
+#include "storage/vstatistic.h"
+#endif /* HYU_LLT_STAT */
+#endif /* HYU_LLT */
 
 #ifdef EXEC_BACKEND
 #include "storage/spin.h"
@@ -261,7 +264,10 @@ static pid_t StartupPID = 0,
 			VCutterPID = 0,
 			DeadZoneUpdaterPID = 0,
 			GCPID = 0,
-#endif
+#ifdef HYU_LLT_STAT
+			MonitorPID = 0,
+#endif /* HYU_LLT_STAT */
+#endif /* HYU_LLT */
 			PgArchPID = 0,
 			PgStatPID = 0,
 			SysLoggerPID = 0;
@@ -1298,7 +1304,10 @@ PostmasterMain(int argc, char *argv[])
 	VCutterPID = StartVCutter();
 	DeadZoneUpdaterPID = StartDeadZoneUpdater();
 	GCPID = StartGC();
-#endif
+#ifdef HYU_LLT_STAT
+	MonitorPID = StartMonitor();
+#endif /* HYU_LLT_STAT */
+#endif /* HYU_LLT */
 
 	/*
 	 * Reset whereToSendOutput from DestDebug (its starting state) to
@@ -2763,7 +2772,11 @@ pmdie(SIGNAL_ARGS)
 					signal_child(DeadZoneUpdaterPID, SIGTERM);
 				if (GCPID != 0)
 					signal_child(GCPID, SIGTERM);
-#endif
+#ifdef HYU_LLT_STAT
+				if (MonitorPID != 0)
+					signal_child(MonitorPID, SIGTERM);
+#endif /* HYU_LLT_STAT */
+#endif /* HYU_LLT */
 
 				/*
 				 * If we're in recovery, we can't kill the startup process
@@ -2819,7 +2832,11 @@ pmdie(SIGNAL_ARGS)
 				signal_child(DeadZoneUpdaterPID, SIGTERM);
 			if (GCPID != 0)
 				signal_child(GCPID, SIGTERM);
-#endif
+#ifdef HYU_LLT_STAT
+			if (MonitorPID != 0)
+				signal_child(MonitorPID, SIGTERM);
+#endif /* HYU_LLT_STAT */
+#endif /* HYU_LLT */
 			if (pmState == PM_STARTUP || pmState == PM_RECOVERY)
 			{
 				SignalSomeChildren(SIGTERM, BACKEND_TYPE_BGWORKER);
@@ -4082,7 +4099,11 @@ TerminateChildren(int signal)
 		signal_child(DeadZoneUpdaterPID, signal);
 	if (GCPID != 0)
 		signal_child(GCPID, signal);
-#endif
+#ifdef HYU_LLT_STAT
+	if (MonitorPID != 0)
+		signal_child(MonitorPID, signal);
+#endif /* HYU_LLT_STAT */
+#endif /* HYU_LLT */
 }
 
 /*
