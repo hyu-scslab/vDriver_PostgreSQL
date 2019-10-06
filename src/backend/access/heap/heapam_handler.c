@@ -187,14 +187,16 @@ heapam_index_fetch_tuple(struct IndexFetchTableData *scan,
 	ret_cache_id = InvalidVCache;
 	if (rel_with_single_pk)
 	{
-		got_heap_tuple = heap_hot_search_buffer_with_vc(tid,
-														hscan->xs_base.rel,
-														hscan->xs_cbuf,
-														snapshot,
-														&bslot->base.tupdata,
-														all_dead,
-														!*call_again,
-														&ret_cache_id);
+		got_heap_tuple =
+				heap_hot_search_buffer_with_vc(tid,
+											   hscan->xs_base.rel,
+											   hscan->xs_cbuf,
+											   snapshot,
+											   &bslot->base.tupdata,
+											   &bslot->base.copied_tuple,
+											   all_dead,
+											   !*call_again,
+											   &ret_cache_id);
 	}
 	else
 	{

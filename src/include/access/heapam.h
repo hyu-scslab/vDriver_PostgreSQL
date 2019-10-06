@@ -134,7 +134,9 @@ extern bool heap_fetch(Relation relation, Snapshot snapshot,
 #ifndef HYU_LLT
 extern bool heap_hot_search_buffer_with_vc(ItemPointer tid, Relation relation,
 										   Buffer buffer, Snapshot snapshot,
-										   HeapTuple heapTuple, bool *all_dead,
+										   HeapTuple heapTuple,
+										   HeapTuple *copied_tuple,
+										   bool *all_dead,
 										   bool first_call, int *ret_cache_id);
 #endif
 extern bool heap_hot_search_buffer(ItemPointer tid, Relation relation,

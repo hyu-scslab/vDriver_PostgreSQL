@@ -1537,7 +1537,8 @@ heap_fetch(Relation relation,
 bool
 heap_hot_search_buffer_with_vc(ItemPointer tid, Relation relation,
 							   Buffer buffer, Snapshot snapshot,
-							   HeapTuple heapTuple, bool *all_dead,
+							   HeapTuple heapTuple,
+							   HeapTuple *copied_tuple, bool *all_dead,
 							   bool first_call, int *ret_cache_id)
 {
 	Page			dp = (Page) BufferGetPage(buffer);
@@ -1615,6 +1616,20 @@ heap_hot_search_buffer_with_vc(ItemPointer tid, Relation relation,
 	{
 		ItemPointerSetOffsetNumber(tid, offnum);
 		PredicateLockTuple(relation, heapTuple, snapshot);
+
+		/*
+		 * Free used copied_tuple.
+		 * There may be somewhere good to free it than here..
+		 */
+		if (*copied_tuple != NULL)
+			heap_freetuple(*copied_tuple);
+		
+		/* copied_tuple is only necessary for read transaction */
+		if (curr_cmdtype == CMD_SELECT)
+			*copied_tuple = heap_copytuple(heapTuple);
+		else
+			*copied_tuple = NULL;
+
 		if (all_dead)
 			*all_dead = false;
 
@@ -1671,6 +1686,20 @@ heap_hot_search_buffer_with_vc(ItemPointer tid, Relation relation,
 	{
 		ItemPointerSetOffsetNumber(tid, offnum);
 		PredicateLockTuple(relation, heapTuple, snapshot);
+	
+		/*
+		 * Free used copied_tuple.
+		 * There may be somewhere good to free it than here..
+		 */
+		if (*copied_tuple != NULL)
+			heap_freetuple(*copied_tuple);
+		
+		/* copied_tuple is only necessary for read transaction */
+		if (curr_cmdtype == CMD_SELECT)
+			*copied_tuple = heap_copytuple(heapTuple);
+		else
+			*copied_tuple = NULL;
+
 		if (all_dead)
 			*all_dead = false;
 
@@ -1687,6 +1716,8 @@ heap_hot_search_buffer_with_vc(ItemPointer tid, Relation relation,
 	{
 		return true;
 	}
+	
+	*copied_tuple = NULL;
 
 	/*
 	 * Two versions in the heap page is invisible for the transaction,

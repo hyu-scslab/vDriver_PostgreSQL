@@ -673,7 +673,48 @@ tts_buffer_heap_getsomeattrs(TupleTableSlot *slot, int natts)
 
 	Assert(!TTS_EMPTY(slot));
 
+#ifndef HYU_LLT
+	if (bslot->base.copied_tuple != NULL)
+		slot_deform_heap_tuple(
+				slot, bslot->base.copied_tuple, &bslot->base.off, natts);
+	else
+		slot_deform_heap_tuple(
+				slot, bslot->base.tuple, &bslot->base.off, natts);
+	
+	/* Verify that the race we solved is really happened */
+#if 0
+	if (bslot->base.copied_tuple != NULL)
+	{
+		HeapTuple org_tuple;
+		HeapTuple copied_tuple;
+		char org_buf[256];
+		char copied_buf[256];
+		
+		org_tuple = bslot->base.tuple;
+		copied_tuple = bslot->base.copied_tuple;
+
+		memset(org_buf, 0, 256);
+		memset(copied_buf, 0, 256);
+		memcpy(org_buf, org_tuple->t_data, org_tuple->t_len);
+		memcpy(copied_buf, copied_tuple->t_data, copied_tuple->t_len);
+
+		bool match = true;
+		for (int i = org_tuple->t_data->t_hoff;
+				i < org_tuple->t_len - org_tuple->t_data->t_hoff; i++)
+		{
+			if (org_buf[i] != copied_buf[i])
+			{
+				match = false;
+				break;
+			}
+		}
+		if (!match)
+			ereport(LOG, (errmsg("@@ race occured by in-place update")));
+	}
+#endif
+#else
 	slot_deform_heap_tuple(slot, bslot->base.tuple, &bslot->base.off, natts);
+#endif
 }
 
 static Datum
