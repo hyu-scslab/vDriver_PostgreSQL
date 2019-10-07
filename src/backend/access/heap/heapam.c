@@ -3537,13 +3537,22 @@ l2:
 
 	if (result == TM_Invisible)
 	{
-		UnlockReleaseBuffer(buffer);
-		#if 0
-		ereport(ERROR,
-				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-				 errmsg("attempted to update invisible tuple!")));
-		#endif
-		return false;
+		/*
+		 * Because we are doing in-place update for oviraptor implementation,
+		 * oldtup could be invisible in this cases.
+		 *
+		 * 1. In a predecessor heap tuple search routine, we delivered any
+		 *    one of tuple in the heap page, if there was no visible tuple.
+		 *    It means that the transaction already found out the conflict,
+		 *    and this result TM_Invisible is intended.
+		 * 2. We release the page latch right after we find a visible tuple,
+		 *    so the tuple we found might be overwritten by another concurrent
+		 *    updater.
+		 *
+		 * Both cases are acceptible, and we can treat it as TM_Update so that
+		 * transaction should be aborted.
+		 */
+		result = TM_Updated;
 	}
 	else if (result == TM_BeingModified && wait)
 	{
