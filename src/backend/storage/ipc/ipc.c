@@ -29,7 +29,7 @@
 #endif
 #include "storage/dsm.h"
 #include "storage/ipc.h"
-#ifndef HYU_LLT
+#ifdef HYU_LLT
 #include "storage/vcluster.h"
 #endif
 #include "tcop/tcopprot.h"
@@ -227,7 +227,7 @@ void
 shmem_exit(int code)
 {
 	shmem_exit_inprogress = true;
-#ifndef HYU_LLT
+#ifdef HYU_LLT
 	VClusterDetachDsa();
 #endif
 

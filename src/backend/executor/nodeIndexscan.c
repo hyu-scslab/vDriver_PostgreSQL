@@ -523,7 +523,7 @@ ExecIndexScan(PlanState *pstate)
 {
 	IndexScanState *node = castNode(IndexScanState, pstate);
 
-#ifndef HYU_LLT
+#ifdef HYU_LLT
 	/*
 	 * To get the primary key information from the relation at the lookup
 	 * path, it must be cached. We do it here, at the start of the plan.

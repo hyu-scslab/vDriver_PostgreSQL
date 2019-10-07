@@ -607,7 +607,7 @@ index_fetch_heap(IndexScanDesc scan, TupleTableSlot *slot)
 bool
 index_getnext_slot(IndexScanDesc scan, ScanDirection direction, TupleTableSlot *slot)
 {
-#ifndef HYU_LLT
+#ifdef HYU_LLT
 	Bitmapset	*bms_pk;
 	Relation	relation;
 #endif
@@ -633,7 +633,7 @@ index_getnext_slot(IndexScanDesc scan, ScanDirection direction, TupleTableSlot *
 		 * the index.
 		 */
 		Assert(ItemPointerIsValid(&scan->xs_heaptid));
-#ifndef HYU_LLT
+#ifdef HYU_LLT
 		/*
 		 * We only want to change the fetch routine for a relation
 		 * having a single primary key

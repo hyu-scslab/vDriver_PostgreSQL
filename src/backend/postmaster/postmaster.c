@@ -573,7 +573,7 @@ PostmasterMain(int argc, char *argv[])
 	int			i;
 	char	   *output_config_variable = NULL;
 
-#ifndef HYU_LLT /* USEFUL BREAKPOINT */
+#ifdef HYU_LLT /* USEFUL BREAKPOINT */
 	//sleep(10);
 #endif
 
@@ -1754,7 +1754,7 @@ ServerLoop(void)
 			(AutoVacuumingActive() || start_autovac_launcher) &&
 			pmState == PM_RUN)
 		{
-#ifndef HYU_LLT
+#ifdef HYU_LLT
 #else
 			AutoVacPID = StartAutoVacLauncher();
 			if (AutoVacPID != 0)
@@ -2981,7 +2981,7 @@ reaper(SIGNAL_ARGS)
 			 * Likewise, start other special children as needed.  In a restart
 			 * situation, some of them may be alive already.
 			 */
-#ifndef HYU_LLT
+#ifdef HYU_LLT
 #else
 			if (!IsBinaryUpgrade && AutoVacuumingActive() && AutoVacPID == 0)
 				AutoVacPID = StartAutoVacLauncher();

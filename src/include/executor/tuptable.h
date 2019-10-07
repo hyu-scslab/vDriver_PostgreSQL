@@ -251,7 +251,7 @@ typedef struct HeapTupleTableSlot
 #define FIELDNO_HEAPTUPLETABLESLOT_OFF 2
 	uint32		off;			/* saved state for slot_deform_heap_tuple */
 	HeapTupleData tupdata;		/* optional workspace for storing tuple */
-#ifndef HYU_LLT
+#ifdef HYU_LLT
 	/*
 	 * Original postgres does not in-place update for making a new version
 	 * tuple when executing update query. Because of this, a transaction

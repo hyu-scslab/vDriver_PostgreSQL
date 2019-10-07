@@ -62,7 +62,7 @@
 #include "storage/smgr.h"
 #include "storage/spin.h"
 #include "storage/standby.h"
-#ifndef HYU_LLT
+#ifdef HYU_LLT
 #include "storage/vcluster.h"
 #include "storage/vcache.h"
 #endif
@@ -73,7 +73,7 @@
 #include "utils/snapmgr.h"
 #include "utils/spccache.h"
 
-#ifndef HYU_LLT
+#ifdef HYU_LLT
 /* Tricky variable for passing the cmd type from ExecutePlan to heap code */
 CmdType curr_cmdtype;
 #endif
@@ -399,7 +399,7 @@ heapgetpage(TableScanDesc sscan, BlockNumber page)
 	/*
 	 * Prune and repair fragmentation for the whole page, if possible.
 	 */
-#ifndef HYU_LLT /* Removed original pruning */
+#ifdef HYU_LLT /* Removed original pruning */
 #else
 	heap_page_prune_opt(scan->rs_base.rs_rd, buffer);
 #endif
@@ -1512,7 +1512,7 @@ heap_fetch(Relation relation,
 	return false;
 }
 
-#ifndef HYU_LLT
+#ifdef HYU_LLT
 /*
  *	heap_hot_search_buffer	- search HOT chain for tuple satisfying snapshot
  *
@@ -2262,12 +2262,12 @@ heap_insert(Relation relation, HeapTuple tup, CommandId cid,
 	Buffer		buffer;
 	Buffer		vmbuffer = InvalidBuffer;
 	bool		all_visible_cleared = false;
-#ifndef HYU_LLT
+#ifdef HYU_LLT
 	Bitmapset	*bms_pk;
 	bool		rel_with_single_pk = false;
 #endif
 
-#ifndef HYU_LLT
+#ifdef HYU_LLT
 	/*
 	 * To get the primary key information from the relation at the lookup
 	 * path, it must be cached. We do it here, at the start of the plan.
@@ -2291,7 +2291,7 @@ heap_insert(Relation relation, HeapTuple tup, CommandId cid,
 	 * Find buffer to insert this tuple into.  If the page is all visible,
 	 * this will also pin the requisite visibility map page.
 	 */
-#ifndef HYU_LLT
+#ifdef HYU_LLT
 	if (relation != NULL && relation->rd_indexattr != NULL)
 	{
 		bms_pk = RelationGetIndexAttrBitmap(
@@ -2336,7 +2336,7 @@ heap_insert(Relation relation, HeapTuple tup, CommandId cid,
 	/* NO EREPORT(ERROR) from here till changes are logged */
 	START_CRIT_SECTION();
 
-#ifndef HYU_LLT
+#ifdef HYU_LLT
 	if (rel_with_single_pk)
 		RelationPutHeapTupleWithDummy(relation, buffer, heaptup,
 				(options & HEAP_INSERT_SPECULATIVE) != 0);
@@ -2611,7 +2611,7 @@ heap_multi_insert(Relation relation, TupleTableSlot **slots, int ntuples,
 		 * Find buffer where at least the next tuple will fit.  If the page is
 		 * all-visible, this will also pin the requisite visibility map page.
 		 */
-#ifndef HYU_LLT
+#ifdef HYU_LLT
 		buffer = RelationGetBufferForTuples(relation, heaptuples[ndone]->t_len,
 										   InvalidBuffer, options, bistate,
 										   &vmbuffer, NULL, 2);
@@ -2629,7 +2629,7 @@ heap_multi_insert(Relation relation, TupleTableSlot **slots, int ntuples,
 		 * RelationGetBufferForTuple has ensured that the first tuple fits.
 		 * Put that on the page, and then as many other tuples as fit.
 		 */
-#ifndef HYU_LLT
+#ifdef HYU_LLT
 		RelationPutHeapTupleWithDummy(
 				relation, buffer, heaptuples[ndone], false);
 #else
@@ -2639,7 +2639,7 @@ heap_multi_insert(Relation relation, TupleTableSlot **slots, int ntuples,
 		{
 			HeapTuple	heaptup = heaptuples[ndone + nthispage];
 
-#ifndef HYU_LLT
+#ifdef HYU_LLT
 			if (PageGetHeapFreeSpaceWithLP(page, 2) <
 					MAXALIGN(heaptup->t_len) * 2 + saveFreeSpace)
 				break;
@@ -3333,7 +3333,7 @@ simple_heap_delete(Relation relation, ItemPointer tid)
 	}
 }
 
-#ifndef HYU_LLT
+#ifdef HYU_LLT
 /*
  *	heap_update - replace a tuple
  *

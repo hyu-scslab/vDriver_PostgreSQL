@@ -43,7 +43,7 @@
 #include "storage/predicate.h"
 #include "storage/procarray.h"
 #include "storage/smgr.h"
-#ifndef HYU_LLT
+#ifdef HYU_LLT
 #include "storage/vcache.h"
 #endif
 #include "utils/builtins.h"
@@ -87,7 +87,7 @@ heapam_index_fetch_begin(Relation rel)
 
 	hscan->xs_base.rel = rel;
 	hscan->xs_cbuf = InvalidBuffer;
-#ifndef HYU_LLT
+#ifdef HYU_LLT
 	hscan->xs_vcache = InvalidVCache;
 #endif
 
@@ -104,7 +104,7 @@ heapam_index_fetch_reset(IndexFetchTableData *scan)
 		ReleaseBuffer(hscan->xs_cbuf);
 		hscan->xs_cbuf = InvalidBuffer;
 	}
-#ifndef HYU_LLT
+#ifdef HYU_LLT
 	if (VCacheIsValid(hscan->xs_vcache))
 	{
 		VCacheUnref(hscan->xs_vcache);
@@ -133,7 +133,7 @@ heapam_index_fetch_tuple(struct IndexFetchTableData *scan,
 	IndexFetchHeapData *hscan = (IndexFetchHeapData *) scan;
 	BufferHeapTupleTableSlot *bslot = (BufferHeapTupleTableSlot *) slot;
 	bool		got_heap_tuple;
-#ifndef HYU_LLT
+#ifdef HYU_LLT
 	Relation	relation;
 	Bitmapset	*bms_pk;
 	bool		rel_with_single_pk = false;
@@ -162,7 +162,7 @@ heapam_index_fetch_tuple(struct IndexFetchTableData *scan,
 		hscan->xs_cbuf = ReleaseAndReadBuffer(hscan->xs_cbuf,
 											  hscan->xs_base.rel,
 											  ItemPointerGetBlockNumber(tid));
-#ifndef HYU_LLT
+#ifdef HYU_LLT
 		if (VCacheIsValid(hscan->xs_vcache))
 		{
 			VCacheUnref(hscan->xs_vcache);
@@ -173,7 +173,7 @@ heapam_index_fetch_tuple(struct IndexFetchTableData *scan,
 		/*
 		 * Prune page, but only if we weren't already on this page
 		 */
-#ifndef HYU_LLT /* Removed original pruning */
+#ifdef HYU_LLT /* Removed original pruning */
 #else
 		if (prev_buf != hscan->xs_cbuf)
 			heap_page_prune_opt(hscan->xs_base.rel, hscan->xs_cbuf);
@@ -182,7 +182,7 @@ heapam_index_fetch_tuple(struct IndexFetchTableData *scan,
 
 	/* Obtain share-lock on the buffer so we can examine visibility */
 	LockBuffer(hscan->xs_cbuf, BUFFER_LOCK_SHARE);
-#ifndef HYU_LLT
+#ifdef HYU_LLT
 	hscan->xs_vcache = InvalidVCache;
 	ret_cache_id = InvalidVCache;
 	if (rel_with_single_pk)
@@ -392,7 +392,7 @@ heapam_tuple_update(Relation relation, ItemPointer otid, TupleTableSlot *slot,
 	bool		shouldFree = true;
 	HeapTuple	tuple = ExecFetchSlotHeapTuple(slot, true, &shouldFree);
 	TM_Result	result;
-#ifndef HYU_LLT
+#ifdef HYU_LLT
 	Bitmapset  *bms_pk;
 	bool		rel_with_single_pk = false;
 #endif
@@ -401,7 +401,7 @@ heapam_tuple_update(Relation relation, ItemPointer otid, TupleTableSlot *slot,
 	slot->tts_tableOid = RelationGetRelid(relation);
 	tuple->t_tableOid = slot->tts_tableOid;
 
-#ifndef HYU_LLT
+#ifdef HYU_LLT
 	if (relation != NULL && relation->rd_indexattr != NULL)
 	{
 		bms_pk = RelationGetIndexAttrBitmap(
@@ -431,7 +431,7 @@ heapam_tuple_update(Relation relation, ItemPointer otid, TupleTableSlot *slot,
 	 *
 	 * If it's a HOT update, we mustn't insert new index entries.
 	 */
-#ifndef HYU_LLT
+#ifdef HYU_LLT
 	 if (rel_with_single_pk)
 		*update_indexes = false;
 	else
@@ -2179,7 +2179,7 @@ heapam_scan_bitmap_next_block(TableScanDesc scan,
 	Snapshot	snapshot;
 	int			ntup;
 
-#ifndef HYU_LLT
+#ifdef HYU_LLT
 	Relation	relation;
 	Bitmapset	*bms_pk;
 	bool		rel_with_single_pk = false;
@@ -2222,7 +2222,7 @@ heapam_scan_bitmap_next_block(TableScanDesc scan,
 	/*
 	 * Prune and repair fragmentation for the whole page, if possible.
 	 */
-#ifndef HYU_LLT /* Removed original pruning */
+#ifdef HYU_LLT /* Removed original pruning */
 #else
 	heap_page_prune_opt(scan->rs_rd, buffer);
 #endif
@@ -2253,7 +2253,7 @@ heapam_scan_bitmap_next_block(TableScanDesc scan,
 			HeapTupleData heapTuple;
 
 			ItemPointerSet(&tid, page, offnum);
-#ifndef HYU_LLT
+#ifdef HYU_LLT
 			/* TODO: need to check if we have to change this */
 			if (heap_hot_search_buffer(&tid, scan->rs_rd, buffer, snapshot,
 									   &heapTuple, NULL, true))

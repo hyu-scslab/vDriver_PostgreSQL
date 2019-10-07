@@ -673,7 +673,7 @@ tts_buffer_heap_getsomeattrs(TupleTableSlot *slot, int natts)
 
 	Assert(!TTS_EMPTY(slot));
 
-#ifndef HYU_LLT
+#ifdef HYU_LLT
 	if (bslot->base.copied_tuple != NULL)
 		slot_deform_heap_tuple(
 				slot, bslot->base.copied_tuple, &bslot->base.off, natts);

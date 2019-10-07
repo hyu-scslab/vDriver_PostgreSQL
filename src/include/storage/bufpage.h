@@ -413,7 +413,7 @@ do { \
 #define PAI_OVERWRITE			(1 << 0)
 #define PAI_IS_HEAP				(1 << 1)
 
-#ifndef HYU_LLT
+#ifdef HYU_LLT
 #define PageAddItemWithDummy(page, item, size, offsetNumber, \
 							 overwrite, is_heap) \
 	PageAddItemExtendedWithDummy(page, item, size, offsetNumber, \
@@ -431,7 +431,7 @@ do { \
 
 extern void PageInit(Page page, Size pageSize, Size specialSize);
 extern bool PageIsVerified(Page page, BlockNumber blkno);
-#ifndef HYU_LLT
+#ifdef HYU_LLT
 extern OffsetNumber PageAddItemExtendedWithDummy(Page page, Item item,
 												 Size size,
 												 OffsetNumber offsetNumber,

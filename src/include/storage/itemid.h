@@ -22,7 +22,7 @@
  * storage on the page.  By convention, lp_len == 0 in every line pointer
  * that does not have storage, independently of its lp_flags state.
  */
-#ifndef HYU_LLT
+#ifdef HYU_LLT
 typedef struct ItemIdData
 {
 	unsigned	lp_off:14,		/* offset to tuple (from start of page) */
@@ -159,7 +159,7 @@ typedef uint16 ItemLength;
  *		Set the item identifier to be NORMAL, with the specified storage.
  *		Beware of multiple evaluations of itemId!
  */
-#ifndef HYU_LLT
+#ifdef HYU_LLT
 #define ItemIdSetNormal(itemId, off, len) \
 ( \
 	(itemId)->lp_flags = LP_NORMAL, \

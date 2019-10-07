@@ -24,7 +24,7 @@
 #include "storage/lmgr.h"
 #include "storage/smgr.h"
 
-#ifndef HYU_LLT
+#ifdef HYU_LLT
 /*
  * RelationPutHeapTupleWithDummy
  *
@@ -359,7 +359,7 @@ RelationAddExtraBlocks(Relation relation, BulkInsertState bistate)
 	 */
 	FreeSpaceMapVacuumRange(relation, firstBlock, blockNum + 1);
 }
-#ifndef HYU_LLT
+#ifdef HYU_LLT
 /*
  * RelationGetBufferForTuple
  *

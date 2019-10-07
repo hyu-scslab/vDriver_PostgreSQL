@@ -80,7 +80,7 @@ typedef struct IndexFetchHeapData
 
 	Buffer		xs_cbuf;		/* current heap buffer in scan, if any */
 	/* NB: if xs_cbuf is not InvalidBuffer, we hold a pin on that buffer */
-#ifndef HYU_LLT
+#ifdef HYU_LLT
 	int			xs_vcache;		/* current vcache in scan, if any */
 #endif
 } IndexFetchHeapData;
@@ -95,7 +95,7 @@ typedef enum
 	HEAPTUPLE_DELETE_IN_PROGRESS	/* deleting xact is still in progress */
 } HTSV_Result;
 
-#ifndef HYU_LLT
+#ifdef HYU_LLT
 /* Tricky variable for passing the cmd type from ExecutePlan to heap code */
 extern CmdType curr_cmdtype;
 #endif
@@ -131,7 +131,7 @@ extern bool heap_getnextslot(TableScanDesc sscan,
 
 extern bool heap_fetch(Relation relation, Snapshot snapshot,
 					   HeapTuple tuple, Buffer *userbuf);
-#ifndef HYU_LLT
+#ifdef HYU_LLT
 extern bool heap_hot_search_buffer_with_vc(ItemPointer tid, Relation relation,
 										   Buffer buffer, Snapshot snapshot,
 										   HeapTuple heapTuple,
@@ -160,7 +160,7 @@ extern TM_Result heap_delete(Relation relation, ItemPointer tid,
 							 struct TM_FailureData *tmfd, bool changingPart);
 extern void heap_finish_speculative(Relation relation, ItemPointer tid);
 extern void heap_abort_speculative(Relation relation, ItemPointer tid);
-#ifndef HYU_LLT
+#ifdef HYU_LLT
 extern TM_Result heap_update_with_vc(Relation relation, ItemPointer otid,
 									 HeapTuple newtup, CommandId cid,
 									 Snapshot crosscheck, bool wait,

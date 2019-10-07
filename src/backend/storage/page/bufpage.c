@@ -161,7 +161,7 @@ PageIsVerified(Page page, BlockNumber blkno)
 	return false;
 }
 
-#ifndef HYU_LLT
+#ifdef HYU_LLT
 /*
  *	PageAddItemExtendedWithDummy
  *
@@ -969,7 +969,7 @@ PageGetExactFreeSpace(Page page)
 	return (Size) space;
 }
 
-#ifndef HYU_LLT
+#ifdef HYU_LLT
 /*
  * PageGetHeapFreeSpace
  *
