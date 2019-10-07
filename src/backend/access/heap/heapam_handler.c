@@ -43,6 +43,9 @@
 #include "storage/predicate.h"
 #include "storage/procarray.h"
 #include "storage/smgr.h"
+#ifdef HYU_LLT
+#include "storage/vcache.h"
+#endif
 #include "utils/builtins.h"
 #include "utils/rel.h"
 
@@ -84,6 +87,9 @@ heapam_index_fetch_begin(Relation rel)
 
 	hscan->xs_base.rel = rel;
 	hscan->xs_cbuf = InvalidBuffer;
+#ifdef HYU_LLT
+	hscan->xs_vcache = InvalidVCache;
+#endif
 
 	return &hscan->xs_base;
 }
@@ -98,6 +104,13 @@ heapam_index_fetch_reset(IndexFetchTableData *scan)
 		ReleaseBuffer(hscan->xs_cbuf);
 		hscan->xs_cbuf = InvalidBuffer;
 	}
+#ifdef HYU_LLT
+	if (VCacheIsValid(hscan->xs_vcache))
+	{
+		VCacheUnref(hscan->xs_vcache);
+		hscan->xs_vcache = InvalidVCache;
+	}
+#endif
 }
 
 static void
@@ -120,6 +133,23 @@ heapam_index_fetch_tuple(struct IndexFetchTableData *scan,
 	IndexFetchHeapData *hscan = (IndexFetchHeapData *) scan;
 	BufferHeapTupleTableSlot *bslot = (BufferHeapTupleTableSlot *) slot;
 	bool		got_heap_tuple;
+#ifdef HYU_LLT
+	Relation	relation;
+	Bitmapset	*bms_pk;
+	bool		rel_with_single_pk = false;
+	int			ret_cache_id;
+
+	relation = scan->rel;
+	if (relation != NULL && relation->rd_indexattr != NULL)
+	{
+		bms_pk = RelationGetIndexAttrBitmap(
+				relation, INDEX_ATTR_BITMAP_PRIMARY_KEY);
+
+		if (bms_num_members(bms_pk) == 1)
+			rel_with_single_pk = true;
+	}
+
+#endif
 
 	Assert(TTS_IS_BUFFERTUPLE(slot));
 
@@ -132,16 +162,55 @@ heapam_index_fetch_tuple(struct IndexFetchTableData *scan,
 		hscan->xs_cbuf = ReleaseAndReadBuffer(hscan->xs_cbuf,
 											  hscan->xs_base.rel,
 											  ItemPointerGetBlockNumber(tid));
+#ifdef HYU_LLT
+		if (VCacheIsValid(hscan->xs_vcache))
+		{
+			VCacheUnref(hscan->xs_vcache);
+			hscan->xs_vcache = InvalidVCache;
+		}
 
+#endif
 		/*
 		 * Prune page, but only if we weren't already on this page
 		 */
+#ifdef HYU_LLT /* Removed original pruning */
+#else
 		if (prev_buf != hscan->xs_cbuf)
 			heap_page_prune_opt(hscan->xs_base.rel, hscan->xs_cbuf);
+#endif
 	}
 
 	/* Obtain share-lock on the buffer so we can examine visibility */
 	LockBuffer(hscan->xs_cbuf, BUFFER_LOCK_SHARE);
+#ifdef HYU_LLT
+	hscan->xs_vcache = InvalidVCache;
+	ret_cache_id = InvalidVCache;
+	if (rel_with_single_pk)
+	{
+		got_heap_tuple =
+				heap_hot_search_buffer_with_vc(tid,
+											   hscan->xs_base.rel,
+											   hscan->xs_cbuf,
+											   snapshot,
+											   &bslot->base.tupdata,
+											   &bslot->base.copied_tuple,
+											   all_dead,
+											   !*call_again,
+											   &ret_cache_id);
+	}
+	else
+	{
+		got_heap_tuple = heap_hot_search_buffer(tid,
+												hscan->xs_base.rel,
+												hscan->xs_cbuf,
+												snapshot,
+												&bslot->base.tupdata,
+												all_dead,
+												!*call_again);
+	}
+	bslot->base.tupdata.t_self = *tid;
+	hscan->xs_vcache = ret_cache_id;
+#else
 	got_heap_tuple = heap_hot_search_buffer(tid,
 											hscan->xs_base.rel,
 											hscan->xs_cbuf,
@@ -150,6 +219,8 @@ heapam_index_fetch_tuple(struct IndexFetchTableData *scan,
 											all_dead,
 											!*call_again);
 	bslot->base.tupdata.t_self = *tid;
+#endif
+	
 	LockBuffer(hscan->xs_cbuf, BUFFER_LOCK_UNLOCK);
 
 	if (got_heap_tuple)
@@ -321,13 +392,35 @@ heapam_tuple_update(Relation relation, ItemPointer otid, TupleTableSlot *slot,
 	bool		shouldFree = true;
 	HeapTuple	tuple = ExecFetchSlotHeapTuple(slot, true, &shouldFree);
 	TM_Result	result;
+#ifdef HYU_LLT
+	Bitmapset  *bms_pk;
+	bool		rel_with_single_pk = false;
+#endif
 
 	/* Update the tuple with table oid */
 	slot->tts_tableOid = RelationGetRelid(relation);
 	tuple->t_tableOid = slot->tts_tableOid;
 
+#ifdef HYU_LLT
+	if (relation != NULL && relation->rd_indexattr != NULL)
+	{
+		bms_pk = RelationGetIndexAttrBitmap(
+				relation, INDEX_ATTR_BITMAP_PRIMARY_KEY);
+
+		if (bms_num_members(bms_pk) == 1)
+			rel_with_single_pk = true;
+	}
+
+	if (rel_with_single_pk)
+		result = heap_update_with_vc(relation, otid, tuple, cid, crosscheck,
+									 wait, tmfd, lockmode);
+	else
+		result = heap_update(relation, otid, tuple, cid, crosscheck, wait,
+							 tmfd, lockmode);
+#else
 	result = heap_update(relation, otid, tuple, cid, crosscheck, wait,
 						 tmfd, lockmode);
+#endif
 	ItemPointerCopy(&tuple->t_self, &slot->tts_tid);
 
 	/*
@@ -338,7 +431,14 @@ heapam_tuple_update(Relation relation, ItemPointer otid, TupleTableSlot *slot,
 	 *
 	 * If it's a HOT update, we mustn't insert new index entries.
 	 */
+#ifdef HYU_LLT
+	 if (rel_with_single_pk)
+		*update_indexes = false;
+	else
+		*update_indexes = result == TM_Ok && !HeapTupleIsHeapOnly(tuple);
+#else
 	*update_indexes = result == TM_Ok && !HeapTupleIsHeapOnly(tuple);
+#endif
 
 	if (shouldFree)
 		pfree(tuple);
@@ -2079,6 +2179,22 @@ heapam_scan_bitmap_next_block(TableScanDesc scan,
 	Snapshot	snapshot;
 	int			ntup;
 
+#ifdef HYU_LLT
+	Relation	relation;
+	Bitmapset	*bms_pk;
+	bool		rel_with_single_pk = false;
+
+	relation = scan->rs_rd;
+	if (relation != NULL && relation->rd_indexattr != NULL)
+	{
+		bms_pk = RelationGetIndexAttrBitmap(
+				relation, INDEX_ATTR_BITMAP_PRIMARY_KEY);
+
+		if (bms_num_members(bms_pk) == 1)
+			rel_with_single_pk = true;
+	}
+#endif
+
 	hscan->rs_cindex = 0;
 	hscan->rs_ntuples = 0;
 
@@ -2106,7 +2222,10 @@ heapam_scan_bitmap_next_block(TableScanDesc scan,
 	/*
 	 * Prune and repair fragmentation for the whole page, if possible.
 	 */
+#ifdef HYU_LLT /* Removed original pruning */
+#else
 	heap_page_prune_opt(scan->rs_rd, buffer);
+#endif
 
 	/*
 	 * We must hold share lock on the buffer content while examining tuple
@@ -2134,8 +2253,15 @@ heapam_scan_bitmap_next_block(TableScanDesc scan,
 			HeapTupleData heapTuple;
 
 			ItemPointerSet(&tid, page, offnum);
+#ifdef HYU_LLT
+			/* TODO: need to check if we have to change this */
 			if (heap_hot_search_buffer(&tid, scan->rs_rd, buffer, snapshot,
 									   &heapTuple, NULL, true))
+
+#else
+			if (heap_hot_search_buffer(&tid, scan->rs_rd, buffer, snapshot,
+									   &heapTuple, NULL, true))
+#endif
 				hscan->rs_vistuples[ntup++] = ItemPointerGetOffsetNumber(&tid);
 		}
 	}

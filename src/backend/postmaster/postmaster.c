@@ -573,6 +573,10 @@ PostmasterMain(int argc, char *argv[])
 	int			i;
 	char	   *output_config_variable = NULL;
 
+#ifdef HYU_LLT /* USEFUL BREAKPOINT */
+	//sleep(10);
+#endif
+
 	InitProcessGlobals();
 
 	PostmasterPid = MyProcPid;
@@ -1750,9 +1754,12 @@ ServerLoop(void)
 			(AutoVacuumingActive() || start_autovac_launcher) &&
 			pmState == PM_RUN)
 		{
+#ifdef HYU_LLT
+#else
 			AutoVacPID = StartAutoVacLauncher();
 			if (AutoVacPID != 0)
 				start_autovac_launcher = false; /* signal processed */
+#endif
 		}
 
 		/* If we have lost the stats collector, try to start a new one */
@@ -2974,8 +2981,11 @@ reaper(SIGNAL_ARGS)
 			 * Likewise, start other special children as needed.  In a restart
 			 * situation, some of them may be alive already.
 			 */
+#ifdef HYU_LLT
+#else
 			if (!IsBinaryUpgrade && AutoVacuumingActive() && AutoVacPID == 0)
 				AutoVacPID = StartAutoVacLauncher();
+#endif
 			if (PgArchStartupAllowed() && PgArchPID == 0)
 				PgArchPID = pgarch_start();
 			if (PgStatPID == 0)

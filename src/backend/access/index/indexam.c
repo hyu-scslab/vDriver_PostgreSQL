@@ -175,6 +175,7 @@ index_insert(Relation indexRelation,
 			 IndexUniqueCheck checkUnique,
 			 IndexInfo *indexInfo)
 {
+	static int t = 0;
 	RELATION_CHECKS;
 	CHECK_REL_PROCEDURE(aminsert);
 
@@ -606,6 +607,10 @@ index_fetch_heap(IndexScanDesc scan, TupleTableSlot *slot)
 bool
 index_getnext_slot(IndexScanDesc scan, ScanDirection direction, TupleTableSlot *slot)
 {
+#ifdef HYU_LLT
+	Bitmapset	*bms_pk;
+	Relation	relation;
+#endif
 	for (;;)
 	{
 		if (!scan->xs_heap_continue)
@@ -628,8 +633,27 @@ index_getnext_slot(IndexScanDesc scan, ScanDirection direction, TupleTableSlot *
 		 * the index.
 		 */
 		Assert(ItemPointerIsValid(&scan->xs_heaptid));
+#ifdef HYU_LLT
+		/*
+		 * We only want to change the fetch routine for a relation
+		 * having a single primary key
+		 */
+		relation = scan->xs_heapfetch->rel;
+		if (relation != NULL && relation->rd_indexattr != NULL)
+		{
+			bms_pk = RelationGetIndexAttrBitmap(
+					relation, INDEX_ATTR_BITMAP_PRIMARY_KEY);
+
+			if (bms_num_members(bms_pk) == 1)
+				return index_fetch_heap(scan, slot);
+		}
+
 		if (index_fetch_heap(scan, slot))
 			return true;
+#else
+		if (index_fetch_heap(scan, slot))
+			return true;
+#endif
 	}
 
 	return false;

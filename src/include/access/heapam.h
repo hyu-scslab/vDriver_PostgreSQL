@@ -80,6 +80,9 @@ typedef struct IndexFetchHeapData
 
 	Buffer		xs_cbuf;		/* current heap buffer in scan, if any */
 	/* NB: if xs_cbuf is not InvalidBuffer, we hold a pin on that buffer */
+#ifdef HYU_LLT
+	int			xs_vcache;		/* current vcache in scan, if any */
+#endif
 } IndexFetchHeapData;
 
 /* Result codes for HeapTupleSatisfiesVacuum */
@@ -91,6 +94,11 @@ typedef enum
 	HEAPTUPLE_INSERT_IN_PROGRESS,	/* inserting xact is still in progress */
 	HEAPTUPLE_DELETE_IN_PROGRESS	/* deleting xact is still in progress */
 } HTSV_Result;
+
+#ifdef HYU_LLT
+/* Tricky variable for passing the cmd type from ExecutePlan to heap code */
+extern CmdType curr_cmdtype;
+#endif
 
 /* ----------------
  *		function prototypes for heap access method
@@ -123,6 +131,14 @@ extern bool heap_getnextslot(TableScanDesc sscan,
 
 extern bool heap_fetch(Relation relation, Snapshot snapshot,
 					   HeapTuple tuple, Buffer *userbuf);
+#ifdef HYU_LLT
+extern bool heap_hot_search_buffer_with_vc(ItemPointer tid, Relation relation,
+										   Buffer buffer, Snapshot snapshot,
+										   HeapTuple heapTuple,
+										   HeapTuple *copied_tuple,
+										   bool *all_dead,
+										   bool first_call, int *ret_cache_id);
+#endif
 extern bool heap_hot_search_buffer(ItemPointer tid, Relation relation,
 								   Buffer buffer, Snapshot snapshot, HeapTuple heapTuple,
 								   bool *all_dead, bool first_call);
@@ -144,6 +160,13 @@ extern TM_Result heap_delete(Relation relation, ItemPointer tid,
 							 struct TM_FailureData *tmfd, bool changingPart);
 extern void heap_finish_speculative(Relation relation, ItemPointer tid);
 extern void heap_abort_speculative(Relation relation, ItemPointer tid);
+#ifdef HYU_LLT
+extern TM_Result heap_update_with_vc(Relation relation, ItemPointer otid,
+									 HeapTuple newtup, CommandId cid,
+									 Snapshot crosscheck, bool wait,
+									 TM_FailureData *tmfd,
+									 LockTupleMode *lockmode);
+#endif
 extern TM_Result heap_update(Relation relation, ItemPointer otid,
 							 HeapTuple newtup,
 							 CommandId cid, Snapshot crosscheck, bool wait,

@@ -1,0 +1,26 @@
+/*-------------------------------------------------------------------------
+ *
+ * vchain.h
+ *	  definitions of functionality for managing version chain
+ *
+ *
+ *
+ * src/include/storage/vchain.h
+ *
+ *-------------------------------------------------------------------------
+ */
+#ifndef VCHAIN_H
+#define VCHAIN_H
+
+#include "storage/vcluster.h"
+
+extern Size VChainShmemSize(void);
+extern void VChainInit(void);
+
+extern bool VChainLookupLocator(PrimaryKey primary_key,
+								Snapshot snapshot,
+								VLocator **ret_locator);
+
+extern void VChainAppendLocator(PrimaryKey primary_key, VLocator *locator);
+
+#endif							/* VCHAIN_H */
