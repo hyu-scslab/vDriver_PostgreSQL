@@ -163,8 +163,8 @@ extern void heap_abort_speculative(Relation relation, ItemPointer tid);
 #ifdef HYU_LLT
 extern TM_Result heap_update_with_vc(Relation relation, ItemPointer otid,
 									 HeapTuple newtup, CommandId cid,
-									 Snapshot crosscheck, bool wait,
-									 TM_FailureData *tmfd,
+									 Snapshot snapshot, Snapshot crosscheck,
+									 bool wait, TM_FailureData *tmfd,
 									 LockTupleMode *lockmode);
 #endif
 extern TM_Result heap_update(Relation relation, ItemPointer otid,

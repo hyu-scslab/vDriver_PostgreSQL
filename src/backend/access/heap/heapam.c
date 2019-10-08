@@ -2007,7 +2007,7 @@ heap_hot_search_buffer(ItemPointer tid, Relation relation, Buffer buffer,
 				PredicateLockTuple(relation, heapTuple, snapshot);
 				if (all_dead)
 					*all_dead = false;
-
+				
 				return true;
 			}
 		}
@@ -3347,8 +3347,8 @@ simple_heap_delete(Relation relation, ItemPointer tid)
  */
 TM_Result
 heap_update_with_vc(Relation relation, ItemPointer otid, HeapTuple newtup,
-					CommandId cid, Snapshot crosscheck, bool wait,
-					TM_FailureData *tmfd, LockTupleMode *lockmode)
+					CommandId cid, Snapshot snapshot, Snapshot crosscheck,
+					bool wait, TM_FailureData *tmfd, LockTupleMode *lockmode)
 {
 	TM_Result	result;
 	TransactionId xid = GetCurrentTransactionId();
@@ -3387,6 +3387,7 @@ heap_update_with_vc(Relation relation, ItemPointer otid, HeapTuple newtup,
 	
 	/* variables for oviraptor */
 	TransactionId	xmin;
+	TransactionId	xmax;
 	Datum			primary_key;
 	Bitmapset	   *bms_pk;
 	int				attnum_pk;
@@ -3530,7 +3531,25 @@ heap_update_with_vc(Relation relation, ItemPointer otid, HeapTuple newtup,
 l2:
 	checked_lockers = false;
 	locker_remains = false;
-	result = HeapTupleSatisfiesUpdate(&oldtup, cid, buffer);
+#if 0
+	{
+		int xmin;
+		int xmax;
+		xmin = HeapTupleHeaderGetRawXmin(oldtup.t_data);
+		if (xmin > xid)
+		{
+			while (1)
+			{
+				result = HeapTupleSatisfiesUpdate(&oldtup, cid, buffer);
+				sleep(10);
+			}
+		}
+	}
+#endif
+	if (HeapTupleSatisfiesVisibility(&oldtup, snapshot, buffer))
+		result = HeapTupleSatisfiesUpdate(&oldtup, cid, buffer);
+	else
+		result = TM_Invisible;
 
 	/* see below about the "no wait" case */
 	Assert(result != TM_BeingModified || wait);
@@ -3960,6 +3979,7 @@ l2:
 		second_oldtup.t_self = *otid;
 
 		xmin = second_oldtup.t_data->t_choice.t_heap.t_xmin;
+		xmax = second_oldtup.t_data->t_choice.t_heap.t_xmax;
 	}
 
 	/* Get a bitmapset of the primary key of the tuple */
@@ -3990,13 +4010,13 @@ l2:
 		{
 		int r = random() % 100;
 		if (r < 80)
-			VClusterAppendTuple(VCLUSTER_HOT, primary_key, xmin,
+			VClusterAppendTuple(VCLUSTER_HOT, primary_key, xmin, xmax,
 								second_oldtup.t_len, second_oldtup.t_data);
 		else if (r < 90)
-			VClusterAppendTuple(VCLUSTER_COLD, primary_key, xmin,
+			VClusterAppendTuple(VCLUSTER_COLD, primary_key, xmin, xmax,
 								second_oldtup.t_len, second_oldtup.t_data);
 		else
-			VClusterAppendTuple(VCLUSTER_LLT, primary_key, xmin,
+			VClusterAppendTuple(VCLUSTER_LLT, primary_key, xmin, xmax,
 								second_oldtup.t_len, second_oldtup.t_data);
 		}
 #if 0
@@ -4027,6 +4047,21 @@ l2:
 	else
 		LP_OVR_SET_RIGHT(lp_second_old);
 	LP_OVR_SET_USING(lp_second_old);
+
+	{
+		int xmin;
+		int xmax;
+		xmin = HeapTupleHeaderGetRawXmin(oldtup.t_data);
+		xmax = HeapTupleHeaderGetRawXmax(oldtup.t_data);
+		if (xmin > xmax_old_tuple)
+		{
+			ereport(LOG, (errmsg("@@ xmin > xmax!")));
+			while (1)
+			{
+				sleep(10);
+			}
+		}
+	}
 
 	/* Clear obsolete visibility flags, possibly set by ourselves above... */
 	oldtup.t_data->t_infomask &= ~(HEAP_XMAX_BITS | HEAP_MOVED);
@@ -4919,7 +4954,6 @@ l2:
 	}
 
 	RelationPutHeapTuple(relation, newbuf, heaptup, false); /* insert new tuple */
-
 
 	/* Clear obsolete visibility flags, possibly set by ourselves above... */
 	oldtup.t_data->t_infomask &= ~(HEAP_XMAX_BITS | HEAP_MOVED);

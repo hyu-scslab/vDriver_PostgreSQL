@@ -60,6 +60,9 @@
 #include "utils/builtins.h"
 #include "utils/rel.h"
 #include "utils/snapmgr.h"
+#ifdef HYU_LLT
+#include "storage/thread_table.h"
+#endif
 
 #define UINT32_ACCESS_ONCE(var)		 ((uint32)(*((volatile uint32 *)&(var))))
 
@@ -414,6 +417,9 @@ ProcArrayEndTransaction(PGPROC *proc, TransactionId latestXid)
 		 */
 		if (LWLockConditionalAcquire(ProcArrayLock, LW_EXCLUSIVE))
 		{
+#ifdef HYU_LLT
+			ClearSnapshot();
+#endif
 			ProcArrayEndTransactionInternal(proc, pgxact, latestXid);
 			LWLockRelease(ProcArrayLock);
 		}
@@ -1707,6 +1713,9 @@ GetSnapshotData(Snapshot snapshot)
 	if (!TransactionIdIsValid(MyPgXact->xmin))
 		MyPgXact->xmin = TransactionXmin = xmin;
 
+#ifdef HYU_LLT
+	SetSnapshot(snapshot->xip, count, xmax);
+#endif
 	LWLockRelease(ProcArrayLock);
 
 	/*

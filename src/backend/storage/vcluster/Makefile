@@ -12,6 +12,6 @@ subdir = src/backend/storage/vcluster
 top_builddir = ../../../..
 include $(top_builddir)/src/Makefile.global
 
-OBJS =  vcluster.o vcache.o vcache_hash.o vchain.o vchain_hash.o
+OBJS =  vcluster.o vcache.o vcache_hash.o vchain.o vchain_hash.o thread_table.o dead_zone.o vstatistic.o
 
 include $(top_srcdir)/src/backend/common.mk

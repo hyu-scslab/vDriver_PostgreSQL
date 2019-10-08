@@ -412,8 +412,8 @@ heapam_tuple_update(Relation relation, ItemPointer otid, TupleTableSlot *slot,
 	}
 
 	if (rel_with_single_pk)
-		result = heap_update_with_vc(relation, otid, tuple, cid, crosscheck,
-									 wait, tmfd, lockmode);
+		result = heap_update_with_vc(relation, otid, tuple, cid, snapshot,
+									 crosscheck, wait, tmfd, lockmode);
 	else
 		result = heap_update(relation, otid, tuple, cid, crosscheck, wait,
 							 tmfd, lockmode);
