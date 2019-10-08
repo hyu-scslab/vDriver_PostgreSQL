@@ -175,7 +175,6 @@ index_insert(Relation indexRelation,
 			 IndexUniqueCheck checkUnique,
 			 IndexInfo *indexInfo)
 {
-	static int t = 0;
 	RELATION_CHECKS;
 	CHECK_REL_PROCEDURE(aminsert);
 

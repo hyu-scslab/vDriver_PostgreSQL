@@ -80,7 +80,6 @@ VStatisticInit(void)
 	/* Initialize statistics */
 	vstatistic_desc->cnt_inserted = 0;
 	vstatistic_desc->cnt_first_prune = 0;
-	vstatistic_desc->cnt_gmin_prune = 0;
 	vstatistic_desc->cnt_logical_deleted = 0;
 	vstatistic_desc->cnt_seg_logical_deleted = 0;
 	vstatistic_desc->cnt_seg_physical_deleted = 0;
@@ -122,9 +121,12 @@ PrintStatistics(void)
 {
 	int64_t cnt_inserted;
 	int64_t cnt_first_prune;
-	int64_t cnt_gmin_prune;
 	double percent_first_prune;
-	double percent_gmin_prune;
+
+	int64_t cnt_page_evicted;
+	int64_t cnt_page_second_prune;
+	double percent_second_prune;
+
 	int64_t cnt_seg_logical_deleted;
 	int64_t cnt_seg_physical_deleted;
 	int64_t cnt_logical_deleted;
@@ -134,9 +136,12 @@ PrintStatistics(void)
 
 	cnt_inserted = vstatistic_desc->cnt_inserted;
 	cnt_first_prune	= vstatistic_desc->cnt_first_prune;
-	cnt_gmin_prune = vstatistic_desc->cnt_gmin_prune;
 	percent_first_prune = (double) cnt_first_prune / cnt_inserted * 100;
-	percent_gmin_prune = (double) cnt_gmin_prune / cnt_inserted * 100;
+
+	cnt_page_evicted = vstatistic_desc->cnt_page_evicted;
+	cnt_page_second_prune = vstatistic_desc->cnt_page_second_prune;
+	percent_second_prune = (double) cnt_page_second_prune / cnt_page_evicted * 100;
+
 	cnt_seg_logical_deleted = vstatistic_desc->cnt_seg_logical_deleted;
 	cnt_seg_physical_deleted = vstatistic_desc->cnt_seg_physical_deleted;
 	cnt_logical_deleted = vstatistic_desc->cnt_logical_deleted;
@@ -148,7 +153,8 @@ PrintStatistics(void)
 			"HYU_LLT\n"
 			"HYU_LLT         insert rec           :  %8ld\n"
 			"HYU_LLT         1st_prune            :  %8ld  (%3.1lf%%)\n"
-			"HYU_LLT         gmin                 :  %8ld  (%3.1lf%%)\n"
+			"HYU_LLT         evicted page         :  %8ld\n"
+			"HYU_LLT         2nd_prune            :  %8ld  (%3.1lf%%)\n"
 			"HYU_LLT         logical delete seg   :  %8ld\n"
 			"HYU_LLT         logical delete rec   :  %8ld\n"
 			"HYU_LLT         physical delete seg  :  %8ld\n"
@@ -158,7 +164,8 @@ PrintStatistics(void)
 			"HYU_LLT\n",
 			cnt_inserted,
 			cnt_first_prune, percent_first_prune,
-			cnt_gmin_prune, percent_gmin_prune,
+			cnt_page_evicted,
+			cnt_page_second_prune, percent_second_prune,
 			cnt_seg_logical_deleted,
 			cnt_seg_logical_deleted * VCLUSTER_SEG_NUM_ENTRY,
 			cnt_seg_physical_deleted,

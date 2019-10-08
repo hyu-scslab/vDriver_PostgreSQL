@@ -17,12 +17,24 @@
 #include "postgres.h"
 
 #include <unistd.h>
+#include <assert.h>
 
 #include "storage/lwlock.h"
 #include "storage/shmem.h"
 #include "storage/vcache.h"
 #include "storage/vcache_hash.h"
 #include "utils/dynahash.h"
+
+#include "storage/dead_zone.h"
+#ifdef HYU_LLT_STAT
+#include "storage/vstatistic.h"
+#endif
+
+/*
+ * Temporal fd array (private) for each segment.
+ * TODO: replace it to hash table or something..
+ */
+int seg_fds[VCLUSTER_MAX_SEGMENTS];
 
 VCacheDescPadded	*VCacheDescriptors;
 char				*VCacheBlocks;
@@ -46,6 +58,8 @@ static int VCacheGetCacheRef(VSegmentId seg_id,
 static void VCacheReadSegmentPage(const VCacheTag *tag, int cache_id);
 static void VCacheWriteSegmentPage(const VCacheTag *tag, int cache_id);
 static void VCacheUnrefInternal(VCacheDesc *cache);
+static void OpenSegmentFile(VSegmentId seg_id);
+static void CloseSegmentFile(VSegmentId seg_id);
 
 /*
  * VCacheShmemSize
@@ -120,6 +134,18 @@ VCacheInit(void)
 			ShmemInitStruct("VCache Metadata",
 							sizeof(VCacheMeta),
 							&foundMeta);
+
+	for (int i = 0; i < VCLUSTER_MAX_SEGMENTS; i++)
+	{
+		VCache->cutting_flag[i] = CF_DEFAULT;
+	}
+
+	/* Initialize file descriptor of segments. */
+	/* It's not in shared memory.. */
+	for (int i = 0; i < VCLUSTER_MAX_SEGMENTS; i++)
+	{
+		seg_fds[i] = -1;
+	}
 }
 
 /*
@@ -133,19 +159,24 @@ VCacheAppendTuple(VSegmentId seg_id,
 				  VSegmentId reserved_seg_id,
 				  VSegmentOffset seg_offset,
 				  Size tuple_size,
-				  const void *tuple)
+				  const void *tuple,
+				  TransactionId xmin,
+				  TransactionId xmax)
 {
 	int				cache_id;		/* vcache index of target segment page */
 	VCacheDesc	   *cache;
 	int				page_offset;
 	int				written;
 	VSegmentOffset	reserved_seg_offset;
+	VRecord*		record;
 
 	/*
 	 * Alined size with power of 2. This is needed because
 	 * the current version only support fixed size tuple with power of 2
 	 */
 	Size			aligned_tuple_size;
+
+	assert(tuple_size <= VCLUSTER_TUPLE_LEN);
 
 	aligned_tuple_size = 1 << my_log2(tuple_size);
 
@@ -157,6 +188,11 @@ VCacheAppendTuple(VSegmentId seg_id,
 	/* Copy the tuple into the cache */
 	memcpy(&VCacheBlocks[cache_id * SEG_PAGESZ + page_offset],
 			tuple, tuple_size);
+	/* Write xmin and xmax. It is used to second-prune. */
+	/* FIXME: It's really hard coding.. */
+	record = (VRecord*) &VCacheBlocks[cache_id * SEG_PAGESZ + page_offset];
+	record->xmin = xmin;
+	record->xmax = xmax;
 
 	/*
 	 * Increase written bytes of the cached page
@@ -471,7 +507,54 @@ find_cand:
 	 */
 	if (cache->is_dirty)
 	{
-		VCacheWriteSegmentPage(&cache->tag, candidate_id);
+		/* There is consensus protocol between evict page and cut segment. */
+		/* The point is that never evict(flush) page which is
+		 * included in the file of cutted-segment */
+		uint64_t flag;
+		VSegmentId seg_id;
+
+		seg_id = cache->tag.seg_id;
+		flag = __sync_fetch_and_add(&VCache->cutting_flag[seg_id], 1);
+		if (!CF_IS_CUT(flag)) {
+			/* The segment is not cutted. Evict page or 2nd-prune. */
+
+			/* Iterate the page and get xmin and xmax. */
+			int offset;
+			TransactionId xmin, xmax;
+			VRecord* record;
+#ifdef HYU_LLT_STAT
+			__sync_fetch_and_add(&vstatistic_desc->cnt_page_evicted, 1);
+#endif
+
+			xmin = PG_UINT32_MAX;
+			xmax = 0;
+			for (offset = 0; offset < SEG_PAGESZ; offset += VCLUSTER_TUPLE_SIZE) {
+				record = (VRecord*) &VCacheBlocks[cache_id * SEG_PAGESZ + offset];
+				if (record->xmin < xmin)
+					xmin = record->xmin;
+				if (xmax < record->xmax)
+					xmax = record->xmax;
+			}
+
+			if (SegIsInDeadZone(xmin, xmax)) {
+				/* It can be prune. */
+#ifdef HYU_LLT_STAT
+				__sync_fetch_and_add(&vstatistic_desc->cnt_page_second_prune, 1);
+#endif
+			}
+			else {
+				/* It's not in dead zone. Flush it. */
+				VCacheWriteSegmentPage(&cache->tag, candidate_id);
+			}
+		}
+		pg_memory_barrier();
+		if (!CF_IS_END(flag)) {
+			flag = __sync_sub_and_fetch(&VCache->cutting_flag[seg_id], 1);
+			if (CF_IS_END(flag)) {
+				/* Delete segment file. */
+				VCacheRemoveSegmentFile(seg_id);
+			}
+		}
 
 		/*
 		 * We do not zero the page so that the page could be overwritten
@@ -524,25 +607,114 @@ VCacheUnrefInternal(VCacheDesc *cache)
 }
 
 /*
+ * VCacheCreateSegmentFile
+ *
+ * Make a new file for corresponding seg_id
+ */
+void VCacheCreateSegmentFile(VSegmentId seg_id)
+{
+	int fd;
+	char filename[128];
+
+	sprintf(filename, "vsegment.%08d", seg_id);
+	//fd = open(filename, O_RDWR | O_CREAT | O_DIRECT, (mode_t)0600);
+	fd = open(filename, O_RDWR | O_CREAT, (mode_t)0600);
+	/* TODO: need to confirm if we need to use O_DIRECT */
+
+	assert(fd >= 0);
+
+	/* pre-allocate the segment file*/
+	fallocate(fd, 0, 0, VCLUSTER_SEGSIZE);
+
+	close(fd);
+}
+
+/*
+ * VCacheTryRemoveSegmentFile
+ *
+ * Try to remove file for corresponding seg_id.
+ * If pages corresponding to segment is flushing, we delegate to last one.
+ */
+void VCacheTryRemoveSegmentFile(VSegmentId seg_id)
+{
+	uint64_t flag;
+
+	flag = __sync_add_and_fetch(&VCache->cutting_flag[seg_id], CF_END_MARK);
+	if (CF_IS_END(flag)) {
+		VCacheRemoveSegmentFile(seg_id);
+	}
+}
+
+/*
+ * VCacheRemoveSegmentFile
+ *
+ * Remove file for corresponding seg_id
+ */
+void VCacheRemoveSegmentFile(VSegmentId seg_id)
+{
+	char filename[128];
+
+	sprintf(filename, "vsegment.%08d", seg_id);
+
+	assert(remove(filename) == 0);
+}
+
+/*
+ * OpenSegmentFile
+ *
+ * Open Segment file.
+ * Caller have to call CloseSegmentFile(seg_id) after file io is done.
+ */
+static void
+OpenSegmentFile(VSegmentId seg_id)
+{
+	int fd;
+	char filename[128];
+
+	sprintf(filename, "vsegment.%08d", seg_id);
+	//fd = open(filename, O_RDWR | O_DIRECT, (mode_t)0600);
+	fd = open(filename, O_RDWR, (mode_t)0600);
+	/* TODO: need to confirm if we need to use O_DIRECT */
+
+	assert(fd >= 0);
+
+	seg_fds[seg_id] = fd;
+}
+
+/*
+ * CloseSegmentFile
+ *
+ * Close Segment file.
+ */
+static void
+CloseSegmentFile(VSegmentId seg_id)
+{
+	int fd;
+
+	fd = seg_fds[seg_id];
+
+	assert(fd >= 0);
+
+	close(fd);
+
+	seg_fds[seg_id] = -1;
+}
+
+/*
  * VCacheReadSegmentPage
  *
  * Read target segment page into the cache block.
- * If the segment file has not opened yet, open it and store the fd.
  */
 static void
 VCacheReadSegmentPage(const VCacheTag *tag, int cache_id)
 {
-	/*
-	 * NOTE: Assumes that all segment files are already opened so that
-	 * we don't have to open the file here.
-	 */
-	int ret;
+	OpenSegmentFile(tag->seg_id);
 
-	ret = pg_pread(seg_fds[tag->seg_id],
+	assert(SEG_PAGESZ == pg_pread(seg_fds[tag->seg_id],
 				   &VCacheBlocks[cache_id * SEG_PAGESZ],
-				   SEG_PAGESZ, tag->page_id * SEG_PAGESZ);
+				   SEG_PAGESZ, tag->page_id * SEG_PAGESZ));
 	
-	Assert(ret == SEG_PAGESZ);
+	CloseSegmentFile(tag->seg_id);
 }
 
 /*
@@ -553,17 +725,13 @@ VCacheReadSegmentPage(const VCacheTag *tag, int cache_id)
 static void
 VCacheWriteSegmentPage(const VCacheTag *tag, int cache_id)
 {
-	/*
-	 * NOTE: Assumes that all segment files are already opened so that
-	 * we don't have to open the file here.
-	 */
-	int ret;
+	OpenSegmentFile(tag->seg_id);
 
-	ret = pg_pwrite(seg_fds[tag->seg_id],
+	assert(SEG_PAGESZ == pg_pwrite(seg_fds[tag->seg_id],
 					&VCacheBlocks[cache_id * SEG_PAGESZ],
-					SEG_PAGESZ, tag->page_id * SEG_PAGESZ);
+					SEG_PAGESZ, tag->page_id * SEG_PAGESZ));
 
-	Assert(ret == SEG_PAGESZ);
+	CloseSegmentFile(tag->seg_id);
 }
 
 #endif /* HYU_LLT */

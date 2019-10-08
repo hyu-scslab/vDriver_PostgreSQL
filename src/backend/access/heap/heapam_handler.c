@@ -157,7 +157,10 @@ heapam_index_fetch_tuple(struct IndexFetchTableData *scan,
 	if (!*call_again)
 	{
 		/* Switch to correct buffer if we don't have it already */
+#ifdef HYU_LLT
+#else
 		Buffer		prev_buf = hscan->xs_cbuf;
+#endif
 
 		hscan->xs_cbuf = ReleaseAndReadBuffer(hscan->xs_cbuf,
 											  hscan->xs_base.rel,
@@ -2182,7 +2185,7 @@ heapam_scan_bitmap_next_block(TableScanDesc scan,
 #ifdef HYU_LLT
 	Relation	relation;
 	Bitmapset	*bms_pk;
-	bool		rel_with_single_pk = false;
+	//bool		rel_with_single_pk = false;
 
 	relation = scan->rs_rd;
 	if (relation != NULL && relation->rd_indexattr != NULL)
@@ -2190,8 +2193,9 @@ heapam_scan_bitmap_next_block(TableScanDesc scan,
 		bms_pk = RelationGetIndexAttrBitmap(
 				relation, INDEX_ATTR_BITMAP_PRIMARY_KEY);
 
-		if (bms_num_members(bms_pk) == 1)
-			rel_with_single_pk = true;
+		if (bms_num_members(bms_pk) == 1) {
+			//rel_with_single_pk = true;
+		}
 	}
 #endif
 

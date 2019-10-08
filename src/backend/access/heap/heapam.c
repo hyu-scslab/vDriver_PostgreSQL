@@ -63,6 +63,7 @@
 #include "storage/spin.h"
 #include "storage/standby.h"
 #ifdef HYU_LLT
+#include <unistd.h>
 #include "storage/vcluster.h"
 #include "storage/vcache.h"
 #endif
@@ -1765,7 +1766,7 @@ heap_hot_search_buffer_with_vc(ItemPointer tid, Relation relation,
 
 	/* Find the old version from the vcluster */
 	cache_id = VClusterLookupTuple(
-			primary_key, snapshot, &heapTuple->t_data);
+			primary_key, snapshot, (void**) &heapTuple->t_data);
 
 	if (VCacheIsValid(cache_id))
 	{
@@ -4050,7 +4051,7 @@ l2:
 
 	{
 		int xmin;
-		int xmax;
+		//int xmax;
 		xmin = HeapTupleHeaderGetRawXmin(oldtup.t_data);
 		xmax = HeapTupleHeaderGetRawXmax(oldtup.t_data);
 		if (xmin > xmax_old_tuple)

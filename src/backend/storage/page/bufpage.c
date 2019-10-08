@@ -298,7 +298,7 @@ PageAddItemExtendedWithDummy(Page page,
 	if ((flags & PAI_IS_HEAP) != 0 && offsetNumber + 1 > MaxHeapTuplesPerPage)
 	{
 		elog(WARNING, "can't put more than MaxHeapTuplesPerPage items in a heap page");
-		ereport(LOG, (errmsg("@@ corrupted page pointers: lower = %u, upper = %u, special = %u, limit = %u, offsetNumber = %u, MaxHeapTuplesPerPage = %u, size = %u", phdr->pd_lower, phdr->pd_upper, phdr->pd_special, limit, offsetNumber, MaxHeapTuplesPerPage, size)));
+		ereport(LOG, (errmsg("@@ corrupted page pointers: lower = %u, upper = %u, special = %u, limit = %u, offsetNumber = %u, MaxHeapTuplesPerPage = %u, size = %lu", phdr->pd_lower, phdr->pd_upper, phdr->pd_special, limit, offsetNumber, MaxHeapTuplesPerPage, size)));
 
 		return InvalidOffsetNumber;
 	}
@@ -396,7 +396,7 @@ PageAddItemExtendedInPlace(Page page,
 						   OffsetNumber offsetNumber)
 {
 	PageHeader	phdr = (PageHeader) page;
-	Size		alignedSize;
+	//Size		alignedSize;
 	ItemId		itemId;
 	OffsetNumber limit;
 
@@ -452,10 +452,10 @@ PageAddItemExtendedInPlace(Page page,
 		return InvalidOffsetNumber;
 	}
 
-	alignedSize = MAXALIGN(size);
+	//alignedSize = MAXALIGN(size);
 	if (size != itemId->lp_len)
 	{
-		elog(WARNING, "size is different, org: %d, new: %d",
+		elog(WARNING, "size is different, org: %d, new: %ld",
 				itemId->lp_len, size);
 		return InvalidOffsetNumber;
 	}

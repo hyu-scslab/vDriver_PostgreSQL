@@ -19,6 +19,7 @@
 
 #include <fcntl.h>
 #include <unistd.h>
+#include <assert.h>
 
 #include "storage/lwlock.h"
 #include "storage/proc.h"
@@ -48,17 +49,10 @@ VClusterDesc	*vclusters;
 /* dsa_area of vcluster for this process */
 dsa_area		*dsa_vcluster;
 
-/*
- * Temporal fd array (private) for each segment.
- * TODO: replace it to hash table or something..
- */
-int seg_fds[VCLUSTER_MAX_SEGMENTS];
-
 /* decls for local routines only used within this module */
 static dsa_pointer AllocNewSegmentInternal(dsa_area *dsa,
 										   VCLUSTER_TYPE type);
 static dsa_pointer AllocNewSegment(VCLUSTER_TYPE type);
-static void PrepareSegmentFile(VSegmentId seg_id);
 static void VClusterCutProcessMain(void);
 static void GCProcessMain(void);
 
@@ -112,6 +106,8 @@ VClusterShmemInit(void)
 		vclusters->reserved_seg_id[i] = i + 1;
 	}
 	pg_atomic_init_u32(&vclusters->next_seg_id, VCLUSTER_NUM + 1);
+
+	assert(sizeof(VRecord) == VCLUSTER_TUPLE_SIZE);
 }
 
 /*
@@ -336,6 +332,9 @@ VClusterAppendTuple(VCLUSTER_TYPE cluster_type,
 
 	/* First prune. */
 	if (RecIsInDeadZone(xmin, xmax)) {
+#ifdef HYU_LLT_STAT
+		__sync_fetch_and_add(&vstatistic_desc->cnt_first_prune, 1);
+#endif
 		return;
 	}
 
@@ -385,7 +384,9 @@ retry:
 						  reserved_seg_id,
 						  alloc_seg_offset,
 						  tuple_size,
-						  tuple);
+						  tuple,
+						  xmin,
+						  xmax);
 		
 		/* Set vlocator of the version tuple */
 		vidx = alloc_seg_offset / aligned_tuple_size;
@@ -502,7 +503,7 @@ AllocNewSegmentInternal(dsa_area *dsa, VCLUSTER_TYPE cluster_type)
 	}
 
 	/* Allocate a new segment file */
-	PrepareSegmentFile(new_seg_id);
+	VCacheCreateSegmentFile(new_seg_id);
 
 	/* Returns dsa_pointer for the new VSegmentDesc */
 	return ret;
@@ -520,27 +521,6 @@ AllocNewSegment(VCLUSTER_TYPE cluster_type)
 	Assert(dsa_vcluster != NULL);
 
 	return AllocNewSegmentInternal(dsa_vcluster, cluster_type);
-}
-
-/*
- * PrepareSegmentFile
- *
- * Make a new file for corresponding seg_id
- */
-static void PrepareSegmentFile(VSegmentId seg_id)
-{
-	int fd;
-	char filename[128];
-
-	sprintf(filename, "vsegment.%08d", seg_id);
-	//fd = open(filename, O_RDWR | O_CREAT | O_DIRECT, (mode_t)0600);
-	fd = open(filename, O_RDWR | O_CREAT, (mode_t)0600);
-	/* TODO: need to confirm if we need to use O_DIRECT */
-
-	/* pre-allocate the segment file*/
-	fallocate(fd, 0, 0, VCLUSTER_SEGSIZE);
-
-	seg_fds[seg_id] = fd;
 }
 
 /*
@@ -626,6 +606,9 @@ start_from_head:
 			/* link prev to next. */
 			victim_prev->next = victim->next;
 		}
+		
+		/* Delete segmet file. */
+		VCacheTryRemoveSegmentFile(victim->seg_id);
 
 		/* Link it to the garbage list. */
 		victim->next = 0;

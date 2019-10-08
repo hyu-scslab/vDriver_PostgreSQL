@@ -29,7 +29,12 @@ typedef struct {
 
 	/* about pruned-records */
 	int64_t			cnt_first_prune;
-	int64_t			cnt_gmin_prune;
+
+	/* number of evicted-pages */
+	int64_t			cnt_page_evicted;
+
+	/* about second-pruned-pages */
+	int64_t			cnt_page_second_prune;
 
 	/* number of logically-deleted-records */
 	int64_t			cnt_logical_deleted;
