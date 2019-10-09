@@ -119,6 +119,22 @@ typedef struct {
 
 	/* reserved segment id for each cluster */
 	VSegmentId			reserved_seg_id[VCLUSTER_NUM];
+
+	/* Padding for frequently updated variables */
+	char				pad1[PG_CACHE_LINE_SIZE];
+	
+	/* to make consensus for multiple transactions to update the stats */
+	pg_atomic_flag		is_updating_stat;
+	
+	/* Padding for frequently updated variables */
+	char				pad2[PG_CACHE_LINE_SIZE];
+
+	/* stat value for HOT/COLD classification */
+	double				average_len;
+
+	/* stat value for LLT classification */
+	double				average_old;
+	
 } VClusterDesc;
 
 extern VClusterDesc	*vclusters;
@@ -145,8 +161,7 @@ extern int VClusterLookupTuple(PrimaryKey primary_key,
 							   Snapshot snapshot,
 							   void **ret_tuple);
 
-extern void VClusterAppendTuple(VCLUSTER_TYPE cluster_type,
-								PrimaryKey primary_key,
+extern void VClusterAppendTuple(PrimaryKey primary_key,
 								TransactionId xmin,
 								TransactionId xmax,
 								Size tuple_size,

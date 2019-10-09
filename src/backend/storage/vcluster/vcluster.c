@@ -20,6 +20,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+#include "access/transam.h"
 #include "storage/lwlock.h"
 #include "storage/proc.h"
 #include "postmaster/fork_process.h"
@@ -42,6 +43,9 @@
 
 #include "storage/vcluster.h"
 
+#define AVG_STAT_WEIGHT				(0.9999)
+#define CLASSIFICATION_THRESHOLD	(10)
+
 /* vcluster descriptor in shared memory*/
 VClusterDesc	*vclusters;
 
@@ -55,6 +59,15 @@ dsa_area		*dsa_vcluster;
 int seg_fds[VCLUSTER_MAX_SEGMENTS];
 
 /* decls for local routines only used within this module */
+static void UpdateVersionStatistics(TransactionId xmin,
+									TransactionId xmax,
+									FullTransactionId nextFullId);
+
+static VCLUSTER_TYPE
+VersionClassification(TransactionId xmin,
+					  TransactionId xmax,
+					  FullTransactionId nextFullId);
+
 static dsa_pointer AllocNewSegmentInternal(dsa_area *dsa,
 										   VCLUSTER_TYPE type);
 static dsa_pointer AllocNewSegment(VCLUSTER_TYPE type);
@@ -306,8 +319,7 @@ VClusterLookupTuple(PrimaryKey primary_key,
  * Append a given tuple into the vcluster whose type is cluster_type
  */
 void
-VClusterAppendTuple(VCLUSTER_TYPE cluster_type,
-					PrimaryKey primary_key,
+VClusterAppendTuple(PrimaryKey primary_key,
 					TransactionId xmin,
 					TransactionId xmax,
 					Size tuple_size,
@@ -318,6 +330,7 @@ VClusterAppendTuple(VCLUSTER_TYPE cluster_type,
 	dsa_pointer		dsap_new_seg;
 	VSegmentId		reserved_seg_id;
 	int				vidx;
+	VCLUSTER_TYPE	cluster_type;
 
 	/*
 	 * Alined size with power of 2. This is needed because
@@ -334,12 +347,20 @@ VClusterAppendTuple(VCLUSTER_TYPE cluster_type,
 	__sync_fetch_and_add(&vstatistic_desc->cnt_inserted, 1);
 #endif
 
+	/* Update the statistics for version classification */
+	UpdateVersionStatistics(
+			xmin, xmax, ShmemVariableCache->nextFullXid);
+
 	/* First prune. */
 	if (RecIsInDeadZone(xmin, xmax)) {
 		return;
 	}
 
 	aligned_tuple_size = 1 << my_log2(tuple_size);
+
+	/* Decide the version cluster type */
+	cluster_type = VersionClassification(
+			xmin, xmax, ShmemVariableCache->nextFullXid);
 
 retry:
 
@@ -457,6 +478,76 @@ retry:
 	/* Clear epoch */
 	pg_memory_barrier();
 	ClearTimestamp();
+}
+
+/*
+ * UpdateVersionStatistics
+ *
+ * Update the version statistics for classification
+ */
+static void
+UpdateVersionStatistics(TransactionId xmin,
+						TransactionId xmax,
+						FullTransactionId nextFullId)
+{
+	uint64	len = xmax - xmin;
+	uint64	old = nextFullId.value - xmax;
+
+	/*
+	 * Average value can be touched by multiple processes so that
+	 * we need to decide only one process to update the value at a time.
+	 */
+	if (pg_atomic_test_set_flag(&vclusters->is_updating_stat))
+	{
+		if (unlikely(vclusters->average_len == 0))
+			vclusters->average_len = len;
+		else
+			vclusters->average_len =
+					vclusters->average_len * AVG_STAT_WEIGHT +
+					len * (1.0 - AVG_STAT_WEIGHT);
+		
+		if (unlikely(vclusters->average_old == 0))
+			vclusters->average_old = old;
+		else
+			vclusters->average_old =
+					vclusters->average_old * AVG_STAT_WEIGHT +
+					old * (1.0 - AVG_STAT_WEIGHT);
+		
+		{
+			static int t = 0;
+			if (t % 1000 == 0)
+			{
+				ereport(LOG, (errmsg(
+						"@@ UpdateVersionStatistics, len: %llu (%llu, %llu), old: %llu, avg_len: %lf, avg_old: %lf",
+						len, xmin, xmax, old, vclusters->average_len, vclusters->average_old)));
+				//t++;
+			}
+		}
+
+		pg_atomic_clear_flag(&vclusters->is_updating_stat);
+	}
+}
+
+/*
+ * VersionClassification
+ *
+ * Classify the version into each version cluster using version statistics
+ */
+static VCLUSTER_TYPE
+VersionClassification(TransactionId xmin,
+					  TransactionId xmax,
+					  FullTransactionId nextFullId)
+{
+	uint64_t	len = xmax - xmin;
+	uint64_t	old = nextFullId.value - xmax;
+
+	if (len > vclusters->average_len * CLASSIFICATION_THRESHOLD)
+		return VCLUSTER_COLD;
+	
+	if (old > vclusters->average_old * CLASSIFICATION_THRESHOLD)
+		return VCLUSTER_LLT;
+	
+	return VCLUSTER_HOT;
 }
 
 /*

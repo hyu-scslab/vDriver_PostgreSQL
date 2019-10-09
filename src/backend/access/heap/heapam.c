@@ -54,6 +54,9 @@
 #include "miscadmin.h"
 #include "pgstat.h"
 #include "port/atomics.h"
+#ifdef HYU_LLT
+#include "storage/buf_internals.h"
+#endif
 #include "storage/bufmgr.h"
 #include "storage/freespace.h"
 #include "storage/lmgr.h"
@@ -1554,6 +1557,10 @@ heap_hot_search_buffer_with_vc(ItemPointer tid, Relation relation,
 	bool			is_null;
 	int				cache_id;
 	bool			is_left;
+	uint32			ovr_latch;
+	BufferDesc	   *buf_desc;
+	uint32			overwriting_off;
+	TransactionId	xmin;
 
 	/* If this is not the first call, previous call returned a (live!) tuple */
 	if (all_dead)
@@ -1607,6 +1614,12 @@ heap_hot_search_buffer_with_vc(ItemPointer tid, Relation relation,
 	heapTuple->t_tableOid = RelationGetRelid(relation);
 	ItemPointerSet(&heapTuple->t_self, blkno, offnum);
 
+	/*
+	 * We read xmin here and then read it again after copying tuple,
+	 * and check whether the two values are same or not.
+	 */
+	xmin = heapTuple->t_data->t_choice.t_heap.t_xmin;
+
 	/* If it's visible per the snapshot, we must return it */
 	valid = HeapTupleSatisfiesVisibility(heapTuple, snapshot, buffer);
 	CheckForSerializableConflictOut(valid, relation, heapTuple,
@@ -1626,14 +1639,57 @@ heap_hot_search_buffer_with_vc(ItemPointer tid, Relation relation,
 		
 		/* copied_tuple is only necessary for read transaction */
 		if (curr_cmdtype == CMD_SELECT)
-			*copied_tuple = heap_copytuple(heapTuple);
+		{
+			/* TODO: Functionalize the below logic */
+			buf_desc = GetBufferDescriptor(buffer - 1);
+			overwriting_off = pg_atomic_read_u32(&buf_desc->overwriting_off);
+			if (offnum == overwriting_off)
+			{
+				/*
+				 * Another transaction is overwriting this version so that
+				 * we need to find this version again in the version cluster.
+				 */
+				ereport(LOG, (errmsg("@@@ race occured on copying tuple")));
+				valid = false;
+			}
+			else
+			{
+				*copied_tuple = heap_copytuple(heapTuple);
+				overwriting_off = pg_atomic_read_u32(
+						&buf_desc->overwriting_off);
+				if (offnum == overwriting_off)
+				{
+					/*
+					 * Another transaction is overwriting this version so that
+					 * the copied_tuple could be corrupted.
+					 */
+					ereport(LOG, (errmsg("@@@ race occured on copied tuple")));
+					heap_freetuple(*copied_tuple);
+					valid = false;
+				}
+				pg_memory_barrier();
+				if (xmin != heapTuple->t_data->t_choice.t_heap.t_xmin)
+				{
+					/*
+					 * tuple's xmin has been changed while we were copying
+					 * the heap tuple.
+					 */
+					ereport(LOG, (errmsg("@@@ xmin has benn changed while copy")));
+					heap_freetuple(*copied_tuple);
+					valid = false;
+				}
+			}
+		}
 		else
 			*copied_tuple = NULL;
 
-		if (all_dead)
-			*all_dead = false;
+		if (valid)
+		{
+			if (all_dead)
+				*all_dead = false;
 
-		return true;
+			return true;
+		}
 	}
 	
 	/*
@@ -1677,6 +1733,13 @@ heap_hot_search_buffer_with_vc(ItemPointer tid, Relation relation,
 	heapTuple->t_tableOid = RelationGetRelid(relation);
 	ItemPointerSet(&heapTuple->t_self, blkno, offnum);
 
+	/*
+	 * We read xmin here and then read it again after copying tuple,
+	 * and check whether the two values are same or not.
+	 */
+	xmin = heapTuple->t_data->t_choice.t_heap.t_xmin;
+
+
 	/* If it's visible per the snapshot, we must return it */
 	valid = HeapTupleSatisfiesVisibility(heapTuple, snapshot, buffer);
 	CheckForSerializableConflictOut(valid, relation, heapTuple,
@@ -1696,7 +1759,46 @@ heap_hot_search_buffer_with_vc(ItemPointer tid, Relation relation,
 		
 		/* copied_tuple is only necessary for read transaction */
 		if (curr_cmdtype == CMD_SELECT)
-			*copied_tuple = heap_copytuple(heapTuple);
+		{
+			buf_desc = GetBufferDescriptor(buffer - 1);
+			overwriting_off = pg_atomic_read_u32(&buf_desc->overwriting_off);
+			if (offnum == overwriting_off)
+			{
+				/*
+				 * Another transaction is overwriting this version so that
+				 * we need to find this version again in the version cluster.
+				 */
+				ereport(LOG, (errmsg("@@@ race occured on copying tuple")));
+				valid = false;
+			}
+			else
+			{
+				*copied_tuple = heap_copytuple(heapTuple);
+				overwriting_off = pg_atomic_read_u32(
+						&buf_desc->overwriting_off);
+				if (offnum == overwriting_off)
+				{
+					/*
+					 * Another transaction is overwriting this version so that
+					 * the copied_tuple could be corrupted.
+					 */
+					ereport(LOG, (errmsg("@@@ race occured on copied tuple")));
+					heap_freetuple(*copied_tuple);
+					valid = false;
+				}
+				pg_memory_barrier();
+				if (xmin != heapTuple->t_data->t_choice.t_heap.t_xmin)
+				{
+					/*
+					 * tuple's xmin has been changed while we were copying
+					 * the heap tuple.
+					 */
+					ereport(LOG, (errmsg("@@@ xmin has benn changed while copy")));
+					heap_freetuple(*copied_tuple);
+					valid = false;
+				}
+			}
+		}
 		else
 			*copied_tuple = NULL;
 
@@ -3397,6 +3499,7 @@ heap_update_with_vc(Relation relation, ItemPointer otid, HeapTuple newtup,
 	OffsetNumber	offnum_second_old;
 	bool			second_is_left;
 	bool			is_second_old_exist;
+	BufferDesc	   *buf_desc;
 
 	Assert(ItemPointerIsValid(otid));
 
@@ -3760,6 +3863,21 @@ l2:
 		}
 	}
 
+	/*
+	 * Buffer latch could had been release if it acquired tuplock so that
+	 * we need to check the visibility again here.
+	 */
+	if (result == TM_Ok)
+	{
+		if (HeapTupleSatisfiesVisibility(&oldtup, snapshot, buffer))
+			result = HeapTupleSatisfiesUpdate(&oldtup, cid, buffer);
+		else
+			result = TM_Updated;
+
+		if (result == TM_Invisible)
+			result = TM_Updated;
+	}
+
 	if (result != TM_Ok)
 	{
 		Assert(result == TM_SelfModified ||
@@ -3980,6 +4098,18 @@ l2:
 
 		xmin = second_oldtup.t_data->t_choice.t_heap.t_xmin;
 		xmax = second_oldtup.t_data->t_choice.t_heap.t_xmax;
+
+		if (oldtup.t_data->t_infomask & HEAP_XMAX_INVALID &&
+			!TransactionIdIsValid(xmax))
+		{
+			/*
+			 * HEAP_XMAX_INVALID is set if the transaction with the id
+			 * xmax has aborted. In this case, another pair tuple of
+			 * oviraptor might be aborted tuple so that we avoid to
+			 * push it down to the version cluster.
+			 */
+			is_second_old_exist = false;
+		}
 	}
 
 	/* Get a bitmapset of the primary key of the tuple */
@@ -4007,18 +4137,9 @@ l2:
 		primary_key = heap_getattr(
 				&second_oldtup, attnum_pk, relation->rd_att, &is_null);
 		
-		{
-		int r = random() % 100;
-		if (r < 80)
-			VClusterAppendTuple(VCLUSTER_HOT, primary_key, xmin, xmax,
-								second_oldtup.t_len, second_oldtup.t_data);
-		else if (r < 90)
-			VClusterAppendTuple(VCLUSTER_COLD, primary_key, xmin, xmax,
-								second_oldtup.t_len, second_oldtup.t_data);
-		else
-			VClusterAppendTuple(VCLUSTER_LLT, primary_key, xmin, xmax,
-								second_oldtup.t_len, second_oldtup.t_data);
-		}
+		/* Append the version to VCluster */
+		VClusterAppendTuple(primary_key, xmin, xmax,
+							second_oldtup.t_len, second_oldtup.t_data);
 #if 0
 		{
 			char written[256];
@@ -4038,8 +4159,11 @@ l2:
 	 */
 
 	/* In-place update on the heap page */
+	buf_desc = GetBufferDescriptor(newbuf - 1);
+	pg_atomic_write_u32(&buf_desc->overwriting_off, offnum_second_old);
 	RelationPutHeapTupleInPlace(
 			relation, newbuf, offnum_second_old, heaptup, false);
+	pg_atomic_write_u32(&buf_desc->overwriting_off, UINT32_MAX);
 
 	/* Set the oviraptor flag of the line pointer */
 	if (second_is_left)

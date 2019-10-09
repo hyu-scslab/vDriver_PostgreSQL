@@ -183,6 +183,11 @@ typedef struct BufferDesc
 	/* state of the tag, containing flags, refcount and usagecount */
 	pg_atomic_uint32 state;
 
+#ifdef HYU_LLT
+	/* line pointer offset of which a transaction is overwriting */
+	pg_atomic_uint32 overwriting_off;
+#endif
+
 	int			wait_backend_pid;	/* backend PID of pin-count waiter */
 	int			freeNext;		/* link in freelist chain */
 

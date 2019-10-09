@@ -125,6 +125,9 @@ InitBufferPool(void)
 			buf->wait_backend_pid = 0;
 
 			buf->buf_id = i;
+#ifdef HYU_LLT
+			pg_atomic_init_u32(&buf->overwriting_off, UINT32_MAX);
+#endif
 
 			/*
 			 * Initially link all the buffers together as unused. Subsequent
