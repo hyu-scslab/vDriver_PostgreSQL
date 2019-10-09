@@ -4136,7 +4136,10 @@ l2:
 		/* Retrive the primary key from the old tuple */
 		primary_key = heap_getattr(
 				&second_oldtup, attnum_pk, relation->rd_att, &is_null);
-		
+	
+		if (xmax < xmin)
+			elog(PANIC, "@@ VClusterAppendTuple, xmax < xmin");
+
 		/* Append the version to VCluster */
 		VClusterAppendTuple(primary_key, xmin, xmax,
 							second_oldtup.t_len, second_oldtup.t_data);

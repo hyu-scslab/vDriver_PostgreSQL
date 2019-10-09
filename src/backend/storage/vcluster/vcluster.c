@@ -513,17 +513,6 @@ UpdateVersionStatistics(TransactionId xmin,
 					vclusters->average_old * AVG_STAT_WEIGHT +
 					old * (1.0 - AVG_STAT_WEIGHT);
 		
-		{
-			static int t = 0;
-			if (t % 1000 == 0)
-			{
-				ereport(LOG, (errmsg(
-						"@@ UpdateVersionStatistics, len: %llu (%llu, %llu), old: %llu, avg_len: %lf, avg_old: %lf",
-						len, xmin, xmax, old, vclusters->average_len, vclusters->average_old)));
-				//t++;
-			}
-		}
-
 		pg_atomic_clear_flag(&vclusters->is_updating_stat);
 	}
 }
