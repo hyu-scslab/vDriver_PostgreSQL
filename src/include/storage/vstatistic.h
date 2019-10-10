@@ -30,6 +30,9 @@ typedef struct {
 	/* about pruned-records */
 	int64_t			cnt_first_prune;
 
+	/* number of records which is not first-pruned */
+	int64_t			cnt_after_first_prune;
+
 	/* number of evicted-pages */
 	int64_t			cnt_page_evicted;
 
