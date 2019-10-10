@@ -291,8 +291,4 @@ CreateSharedMemoryAndSemaphores(int port)
 	 */
 	if (shmem_startup_hook)
 		shmem_startup_hook();
-
-#ifdef HYU_LLT
-	VClusterDsaInit();
-#endif
 }

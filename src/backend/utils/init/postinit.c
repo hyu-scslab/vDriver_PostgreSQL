@@ -564,9 +564,6 @@ BaseInit(void)
 	InitSync();
 	smgrinit();
 	InitBufferPoolAccess();
-#ifdef HYU_LLT
-	VClusterAttachDsa();
-#endif
 }
 
 

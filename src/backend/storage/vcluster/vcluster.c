@@ -187,45 +187,74 @@ void
 VClusterDsaInit(void)
 {
 	dsa_area	*dsa;
-	
-	/* Initialize dsa area for vcluster */
-	dsa = dsa_create(LWTRANCHE_VCLUSTER);
-	ProcGlobal->vcluster_dsa_handle = dsa_get_handle(dsa);
-	dsa_pin(dsa);
+	dsa_handle	handle;
 
 	/*
-	 * Pre-allocate and initialize the first segment descriptors, files
-	 * for each vcluster.
-	 * assign segment id 0, 1, 2 for HOT, COLD, LLT segment, respectively.
+	 * The first backend process creates the dsa area for vcluster,
+	 * and another backend processes waits the creation and then attach to it.
 	 */
-	/* FIXME: need to devide code between dsa init and initiate variables. */
-	for (int i = 0; i < VCLUSTER_NUM; i++)
+	if (ProcGlobal->vcluster_dsa_handle == 0)
 	{
-		dsa_pointer		dsap_seg_desc;
-		VSegmentDesc*	seg_desc;
+		uint32 expected = 0;
+		if (pg_atomic_compare_exchange_u32(
+				(pg_atomic_uint32 *)(&ProcGlobal->vcluster_dsa_handle),
+				&expected, UINT32_MAX))
+		{
+			/* This process is selected to create dsa_area itself */
 
-		/* First available segment */
-		vclusters->tail[i] = AllocNewSegmentInternal(dsa, i);
-		vclusters->head[i] = vclusters->tail[i];
+			/* Initialize dsa area for vcluster */
+			dsa = dsa_create(LWTRANCHE_VCLUSTER);
+			handle = dsa_get_handle(dsa);
+			dsa_pin(dsa);
 
-		/* A dummy node for garbage list. */
-		/* Allocate a new segment descriptor in shared memory */
-		dsap_seg_desc = dsa_allocate_extended(
-				dsa, sizeof(VSegmentDesc), DSA_ALLOC_ZERO);
-		seg_desc = (VSegmentDesc *)dsa_get_address(dsa, dsap_seg_desc);
+			/*
+			 * Pre-allocate and initialize the first segment descriptors, files
+			 * for each vcluster.
+			 * assign segment id 0, 1, 2 for HOT, COLD, LLT segment, respectively.
+			 */
+			/* FIXME: need to devide code between dsa init and initiate variables. */
+			for (int i = 0; i < VCLUSTER_NUM; i++)
+			{
+				dsa_pointer		dsap_seg_desc;
+				VSegmentDesc*	seg_desc;
 
-		/* dummy node need only one variable "next". */
-		seg_desc->next = 0;
+				/* First available segment */
+				vclusters->tail[i] = AllocNewSegmentInternal(dsa, i);
+				vclusters->head[i] = vclusters->tail[i];
 
-		vclusters->garbage_list_head[i] = dsap_seg_desc;
-		vclusters->garbage_list_tail[i] = dsap_seg_desc;
+				/* A dummy node for garbage list. */
+				/* Allocate a new segment descriptor in shared memory */
+				dsap_seg_desc = dsa_allocate_extended(
+						dsa, sizeof(VSegmentDesc), DSA_ALLOC_ZERO);
+				seg_desc = (VSegmentDesc *)dsa_get_address(dsa, dsap_seg_desc);
+
+				/* dummy node need only one variable "next". */
+				seg_desc->next = 0;
+
+				vclusters->garbage_list_head[i] = dsap_seg_desc;
+				vclusters->garbage_list_tail[i] = dsap_seg_desc;
+			}
+			dsa_detach(dsa);
+
+			pg_memory_barrier();
+
+			ProcGlobal->vcluster_dsa_handle = handle;
+		}
+	}
+	while (ProcGlobal->vcluster_dsa_handle == UINT32_MAX)
+	{
+		/*
+		 * Another process is creating an initial dsa area for vcluster,
+		 * so just wait it to finish and then attach to it.
+		 */
+		sched_yield();
 	}
 
-	dsa_detach(dsa);
+	VClusterAttachDsa();
 }
 
 /*
- * VClusterDsaInit
+ * VClusterAttachDsat
  *
  * Attach to the dsa area for vcluster.
  */

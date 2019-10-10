@@ -474,6 +474,11 @@ InitProcess(void)
 	 */
 	InitLWLockAccess();
 	InitDeadLockChecking();
+
+#ifdef HYU_LLT
+	VClusterDsaInit();
+#endif
+
 }
 
 /*
