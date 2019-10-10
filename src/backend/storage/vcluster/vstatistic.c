@@ -80,6 +80,8 @@ VStatisticInit(void)
 	/* Initialize statistics */
 	vstatistic_desc->cnt_inserted = 0;
 	vstatistic_desc->cnt_first_prune = 0;
+	vstatistic_desc->cnt_after_first_prune = 0;
+	vstatistic_desc->cnt_page_evicted = 0;
 	vstatistic_desc->cnt_logical_deleted = 0;
 	vstatistic_desc->cnt_seg_logical_deleted = 0;
 	vstatistic_desc->cnt_seg_physical_deleted = 0;
@@ -121,7 +123,11 @@ PrintStatistics(void)
 {
 	int64_t cnt_inserted;
 	int64_t cnt_first_prune;
+	int64_t cnt_after_first_prune;
 	double percent_first_prune;
+
+	int64_t prev_cnt_inserted = 0;
+	int64_t prev_cnt_first_prune = 0;
 
 	int64_t cnt_page_evicted;
 	int64_t cnt_page_second_prune;
@@ -132,46 +138,55 @@ PrintStatistics(void)
 	int64_t cnt_logical_deleted;
 	int64_t delta_deleted_inserted;
 
+	for (;;) {
+
+		cnt_inserted = vstatistic_desc->cnt_inserted;
+		cnt_first_prune	= vstatistic_desc->cnt_first_prune;
+		cnt_after_first_prune = vstatistic_desc->cnt_after_first_prune;
+		percent_first_prune = (double) (cnt_first_prune - prev_cnt_first_prune) / 
+			(cnt_inserted - prev_cnt_inserted) * 100;
+
+		prev_cnt_inserted = cnt_inserted;
+		prev_cnt_first_prune = cnt_first_prune;
+
+		cnt_page_evicted = vstatistic_desc->cnt_page_evicted;
+		cnt_page_second_prune = vstatistic_desc->cnt_page_second_prune;
+		percent_second_prune = (double) cnt_page_second_prune / cnt_page_evicted * 100;
+
+		cnt_seg_logical_deleted = vstatistic_desc->cnt_seg_logical_deleted;
+		cnt_seg_physical_deleted = vstatistic_desc->cnt_seg_physical_deleted;
+		cnt_logical_deleted = vstatistic_desc->cnt_logical_deleted;
+		delta_deleted_inserted = cnt_inserted - cnt_logical_deleted;
 
 
-	cnt_inserted = vstatistic_desc->cnt_inserted;
-	cnt_first_prune	= vstatistic_desc->cnt_first_prune;
-	percent_first_prune = (double) cnt_first_prune / cnt_inserted * 100;
-
-	cnt_page_evicted = vstatistic_desc->cnt_page_evicted;
-	cnt_page_second_prune = vstatistic_desc->cnt_page_second_prune;
-	percent_second_prune = (double) cnt_page_second_prune / cnt_page_evicted * 100;
-
-	cnt_seg_logical_deleted = vstatistic_desc->cnt_seg_logical_deleted;
-	cnt_seg_physical_deleted = vstatistic_desc->cnt_seg_physical_deleted;
-	cnt_logical_deleted = vstatistic_desc->cnt_logical_deleted;
-	delta_deleted_inserted = cnt_inserted - cnt_logical_deleted;
-
-
-	elog(WARNING, "HYU_LLT : statistic ============================\n"
-			"HYU_LLT\n"
-			"HYU_LLT\n"
-			"HYU_LLT         insert rec           :  %8ld\n"
-			"HYU_LLT         1st_prune            :  %8ld  (%3.1lf%%)\n"
-			"HYU_LLT         evicted page         :  %8ld\n"
-			"HYU_LLT         2nd_prune            :  %8ld  (%3.1lf%%)\n"
-			"HYU_LLT         logical delete seg   :  %8ld\n"
-			"HYU_LLT         logical delete rec   :  %8ld\n"
-			"HYU_LLT         physical delete seg  :  %8ld\n"
-			"HYU_LLT         physical delete rec  :  %8ld\n"
-			"HYU_LLT         delta ins - del rec  :  %8ld\n"
-			"HYU_LLT\n"
-			"HYU_LLT\n",
-			cnt_inserted,
-			cnt_first_prune, percent_first_prune,
-			cnt_page_evicted,
-			cnt_page_second_prune, percent_second_prune,
-			cnt_seg_logical_deleted,
-			cnt_seg_logical_deleted * VCLUSTER_SEG_NUM_ENTRY,
-			cnt_seg_physical_deleted,
-			cnt_seg_physical_deleted * VCLUSTER_SEG_NUM_ENTRY,
-			delta_deleted_inserted
-		);
+		elog(WARNING, "HYU_LLT : statistic ============================\n"
+				"HYU_LLT\n"
+				"HYU_LLT\n"
+				"HYU_LLT         insert rec           :  %8ld\n"
+				"HYU_LLT         1st_prune            :  %8ld  (%3.1lf%%)\n"
+				"HYU_LLT         after first prune    :  %8ld\n"
+				"HYU_LLT         evicted page         :  %8ld\n"
+				"HYU_LLT         2nd_prune            :  %8ld  (%3.1lf%%)\n"
+				"HYU_LLT         logical delete seg   :  %8ld\n"
+				"HYU_LLT         logical delete rec   :  %8ld\n"
+				"HYU_LLT         physical delete seg  :  %8ld\n"
+				"HYU_LLT         physical delete rec  :  %8ld\n"
+				"HYU_LLT         delta ins - del rec  :  %8ld\n"
+				"HYU_LLT\n"
+				"HYU_LLT\n",
+				cnt_inserted,
+				cnt_first_prune, percent_first_prune,
+				cnt_after_first_prune,
+				cnt_page_evicted,
+				cnt_page_second_prune, percent_second_prune,
+				cnt_seg_logical_deleted,
+				cnt_seg_logical_deleted * VCLUSTER_SEG_NUM_ENTRY,
+				cnt_seg_physical_deleted,
+				cnt_seg_physical_deleted * VCLUSTER_SEG_NUM_ENTRY,
+				delta_deleted_inserted
+			);
+		sleep(1);
+	}
 }
 
 /*

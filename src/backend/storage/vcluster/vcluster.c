@@ -354,6 +354,9 @@ VClusterAppendTuple(PrimaryKey primary_key,
 #endif
 		return;
 	}
+#ifdef HYU_LLT_STAT
+	__sync_fetch_and_add(&vstatistic_desc->cnt_after_first_prune, 1);
+#endif
 
 	aligned_tuple_size = 1 << my_log2(tuple_size);
 
