@@ -256,16 +256,10 @@ RecIsInDeadZone(TransactionId xmin, TransactionId xmax)
 {
 	if (xmax < RecentGlobalXmin + vacuum_defer_cleanup_age) {
 		/* It's optimized-zone1-range. */
-#ifdef HYU_LLT_STAT
-		__sync_fetch_and_add(&vstatistic_desc->cnt_gmin_prune, 1);
-#endif
 		return true;
 	}
 	if (IsInDeadZone(xmin, xmax)) {
 		/* Calculated-dead-zone. */
-#ifdef HYU_LLT_STAT
-		__sync_fetch_and_add(&vstatistic_desc->cnt_first_prune, 1);
-#endif
 		return true;
 	}
 

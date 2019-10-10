@@ -32,8 +32,20 @@ typedef enum {
 /* Version tuple size */
 #define VCLUSTER_TUPLE_SIZE	(256)	/* TODO: move this to configuration */
 
+#define VCLUSTER_TUPLE_LEN	(VCLUSTER_TUPLE_SIZE - 8)
+/* Layout of one record on VSegment. Size must be VCLUSTER_TUPLE_SIZE. */
+/* These are used to second-prune. */
+typedef struct {
+	char tuple[VCLUSTER_TUPLE_LEN];
+	TransactionId xmin;
+	TransactionId xmax;
+} VRecord;
+
 /* Number of tuple entry in a vsegment */
 #define VCLUSTER_SEG_NUM_ENTRY	((VCLUSTER_SEGSIZE) / (VCLUSTER_TUPLE_SIZE))
+
+/* Max number of segments we can manage. */
+#define VCLUSTER_MAX_SEGMENTS		10000
 
 typedef uint32_t VSegmentId;
 typedef uint32_t VSegmentOffset;
@@ -139,9 +151,6 @@ typedef struct {
 
 extern VClusterDesc	*vclusters;
 extern dsa_area		*dsa_vcluster;
-
-#define VCLUSTER_MAX_SEGMENTS		10000
-extern int seg_fds[VCLUSTER_MAX_SEGMENTS];
 
 extern Size VClusterShmemSize(void);
 extern void VClusterShmemInit(void);
