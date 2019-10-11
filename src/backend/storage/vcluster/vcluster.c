@@ -247,7 +247,7 @@ VClusterDsaInit(void)
 		 * Another process is creating an initial dsa area for vcluster,
 		 * so just wait it to finish and then attach to it.
 		 */
-		sched_yield();
+		usleep(1);
 	}
 
 	VClusterAttachDsa();
