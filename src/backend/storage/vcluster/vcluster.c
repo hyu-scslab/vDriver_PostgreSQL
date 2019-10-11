@@ -288,13 +288,14 @@ VClusterDetachDsa(void)
  * Returns true if found. Returns false if not found.
  */
 bool
-VClusterLookupTuple(PrimaryKey primary_key,
+VClusterLookupTuple(Oid rel_node,
+					PrimaryKey primary_key,
 					Size size,
 					Snapshot snapshot,
 					void *ret_tuple)
 {
 	VLocator *locator;
-	if (!VChainLookupLocator(primary_key, snapshot, &locator))
+	if (!VChainLookupLocator(rel_node, primary_key, snapshot, &locator))
 	{
 		/* Couldn't find the visible locator for the primary key */
 		return false;
@@ -317,14 +318,15 @@ VClusterLookupTuple(PrimaryKey primary_key,
  * Return InvalidVCache if not found.
  */
 int
-VClusterLookupTuple(PrimaryKey primary_key,
+VClusterLookupTuple(Oid rel_node,
+					PrimaryKey primary_key,
 					Snapshot snapshot,
 					void **ret_tuple)
 {
-	VLocator *locator;
-	int cache_id;
+	VLocator   *locator;
+	int			cache_id;
 
-	if (!VChainLookupLocator(primary_key, snapshot, &locator))
+	if (!VChainLookupLocator(rel_node, primary_key, snapshot, &locator))
 	{
 		/* Couldn't find the visible locator for the primary key */
 		return InvalidVCache;
@@ -341,7 +343,8 @@ VClusterLookupTuple(PrimaryKey primary_key,
  * Append a given tuple into the vcluster whose type is cluster_type
  */
 void
-VClusterAppendTuple(PrimaryKey primary_key,
+VClusterAppendTuple(Oid rel_node,
+					PrimaryKey primary_key,
 					TransactionId xmin,
 					TransactionId xmax,
 					Snapshot snapshot,
@@ -448,7 +451,7 @@ retry:
 		seg_desc->locators[vidx].dsap_next = 0;
 
 		/* Append the locator into the version chain */
-		VChainAppendLocator(primary_key, &seg_desc->locators[vidx]);
+		VChainAppendLocator(rel_node, primary_key, &seg_desc->locators[vidx]);
 
 		if (VCLUSTER_SEG_NUM_ENTRY ==
 				__sync_add_and_fetch(&seg_desc->counter, 1)) {

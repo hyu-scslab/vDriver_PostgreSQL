@@ -26,7 +26,7 @@
 typedef struct
 {
 	/* Primary key, assume we only use 64 bit integer at this time */
-	PrimaryKey	key;
+	VChainTag	key;
 
 	/*
 	 * dsa_pointer of the chain.
@@ -60,7 +60,7 @@ VChainHashInit(int size)
 	HASHCTL		info;
 
 	/* Primary key maps to version chain */
-	info.keysize = sizeof(PrimaryKey);
+	info.keysize = sizeof(VChainTag);
 	info.entrysize = sizeof(VChainLookupEnt);
 	info.num_partitions = NUM_VCHAIN_PARTITIONS;
 
@@ -80,7 +80,7 @@ VChainHashInit(int size)
  * to do the hash computation twice (hash_any is a bit slow).
  */
 uint32
-VChainHashCode(const PrimaryKey *tagPtr)
+VChainHashCode(const VChainTag *tagPtr)
 {
 	return get_hash_value(SharedVChainHash, (void *) tagPtr);
 }
@@ -93,7 +93,7 @@ VChainHashCode(const PrimaryKey *tagPtr)
  * Caller must hold at least share lock on VChainMappingLock for tag's partition
  */
 bool
-VChainHashLookup(const PrimaryKey *tagPtr, uint32 hashcode, dsa_pointer *ret)
+VChainHashLookup(const VChainTag *tagPtr, uint32 hashcode, dsa_pointer *ret)
 {
 	VChainLookupEnt *result;
 
@@ -128,7 +128,7 @@ VChainHashLookup(const PrimaryKey *tagPtr, uint32 hashcode, dsa_pointer *ret)
  * Caller must hold exclusive lock on VChainMappingLock for tag's partition
  */
 bool
-VChainHashInsert(const PrimaryKey *tagPtr,
+VChainHashInsert(const VChainTag *tagPtr,
 				 uint32 hashcode,
 				 dsa_pointer *ret)
 {
@@ -179,7 +179,7 @@ VChainHashInsert(const PrimaryKey *tagPtr,
  * Caller must hold exclusive lock on VChainMappingLock for pkey's partition
  */
 void
-VChainHashDelete(const PrimaryKey *tagPtr,
+VChainHashDelete(const VChainTag *tagPtr,
 				 uint32 hashcode)
 {
 	VChainLookupEnt *result;

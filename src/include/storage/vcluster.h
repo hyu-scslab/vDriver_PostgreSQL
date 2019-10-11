@@ -165,16 +165,19 @@ void VClusterUpdateTransactionStatistics(FullTransactionId xid,
 										 FullTransactionId nextFullId);
 
 #if 0
-extern bool VClusterLookupTuple(PrimaryKey primary_key,
+extern bool VClusterLookupTuple(Oid rel_node,
+								PrimaryKey primary_key,
 								Size size,
 								Snapshot snapshot,
 								void *ret_tuple);
 #endif
-extern int VClusterLookupTuple(PrimaryKey primary_key,
+extern int VClusterLookupTuple(Oid rel_node,
+							   PrimaryKey primary_key,
 							   Snapshot snapshot,
 							   void **ret_tuple);
 
-extern void VClusterAppendTuple(PrimaryKey primary_key,
+extern void VClusterAppendTuple(Oid rel_node,
+								PrimaryKey primary_key,
 								TransactionId xmin,
 								TransactionId xmax,
 								Snapshot snapshot,

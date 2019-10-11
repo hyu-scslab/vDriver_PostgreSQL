@@ -29,6 +29,7 @@
 #endif /* HYU_LLT_STAT */
 
 #include "storage/vchain.h"
+#include "storage/vchain_hash.h"
 
 #include <assert.h>
 
@@ -70,7 +71,8 @@ VChainInit(void)
  * Returns true if it found, false if not found.
  */
 bool
-VChainLookupLocator(PrimaryKey primary_key,
+VChainLookupLocator(Oid rel_node,
+					PrimaryKey primary_key,
 					Snapshot snapshot,
 					VLocator **ret_locator)
 {
@@ -79,14 +81,18 @@ VChainLookupLocator(PrimaryKey primary_key,
 	dsa_pointer		dsap_chain;
 	VLocator		*chain;
 	VLocator		*locator;
+	VChainTag		chain_tag;
+
+	chain_tag.rel_node = rel_node;
+	chain_tag.primary_key = primary_key;
 
 	/* Get hash code for the primary key */
-	hashcode = VChainHashCode(&primary_key);
+	hashcode = VChainHashCode(&chain_tag);
 	partition_lock = VChainMappingPartitionLock(hashcode);
 
 	/* Acquire partition lock for the primary key with shared mode */
 	LWLockAcquire(partition_lock, LW_SHARED);
-	if (!VChainHashLookup(&primary_key, hashcode, &dsap_chain))
+	if (!VChainHashLookup(&chain_tag, hashcode, &dsap_chain))
 	{
 		/* There is no hash entry for the primary key in the vchain hash */
 		LWLockRelease(partition_lock);
@@ -147,7 +153,7 @@ VChainLookupLocator(PrimaryKey primary_key,
  * Append a vlocator into the version chain of the corresponding tuple.
  */
 void
-VChainAppendLocator(PrimaryKey primary_key, VLocator *locator)
+VChainAppendLocator(Oid rel_node, PrimaryKey primary_key, VLocator *locator)
 {
 	LWLock			*partition_lock;
 	uint32			hashcode;
@@ -156,14 +162,18 @@ VChainAppendLocator(PrimaryKey primary_key, VLocator *locator)
 	dsa_pointer		dsap_tail_prev;
 	VLocator		*tail_prev;
 	VLocatorFlag	flag;
+	VChainTag		chain_tag;
+
+	chain_tag.rel_node = rel_node;
+	chain_tag.primary_key = primary_key;
 
 	/* Get hash code for the primary key */
-	hashcode = VChainHashCode(&primary_key);
+	hashcode = VChainHashCode(&chain_tag);
 	partition_lock = VChainMappingPartitionLock(hashcode);
 
 	/* Acquire partition lock for the primary key with shared mode */
 	LWLockAcquire(partition_lock, LW_SHARED);
-	if (VChainHashLookup(&primary_key, hashcode, &dsap_chain))
+	if (VChainHashLookup(&chain_tag, hashcode, &dsap_chain))
 	{
 		/* Hash entry is already exists */
 		LWLockRelease(partition_lock);
@@ -175,7 +185,7 @@ VChainAppendLocator(PrimaryKey primary_key, VLocator *locator)
 		LWLockAcquire(partition_lock, LW_EXCLUSIVE);
 
 		/* Insert a new hash entry for the primary key */
-		VChainHashInsert(&primary_key, hashcode, &dsap_chain);
+		VChainHashInsert(&chain_tag, hashcode, &dsap_chain);
 		LWLockRelease(partition_lock);
 	}
 	

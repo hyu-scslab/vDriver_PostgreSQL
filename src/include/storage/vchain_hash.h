@@ -14,6 +14,12 @@
 
 #include "storage/vcluster.h"
 
+typedef struct VChainTag
+{
+	Oid				rel_node;
+	PrimaryKey		primary_key;
+} VChainTag;
+
 /* in globals.c ... this duplicates miscadmin.h */
 extern PGDLLIMPORT int NVChainExpected;
 
@@ -32,15 +38,15 @@ extern PGDLLIMPORT int NVChainExpected;
 
 extern Size VChainHashShmemSize(int size);
 extern void VChainHashInit(int size);
-extern uint32 VChainHashCode(const PrimaryKey *tagPtr);
+extern uint32 VChainHashCode(const VChainTag *tagPtr);
 
-extern bool VChainHashLookup(const PrimaryKey *tagPtr,
+extern bool VChainHashLookup(const VChainTag *tagPtr,
 							 uint32 hashcode,
 							 dsa_pointer *ret);
-extern bool VChainHashInsert(const PrimaryKey *tagPtr,
+extern bool VChainHashInsert(const VChainTag *tagPtr,
 							 uint32 hashcode,
 							 dsa_pointer *ret);
-extern void VChainHashDelete(const PrimaryKey *tagPtr,
+extern void VChainHashDelete(const VChainTag *tagPtr,
 							 uint32 hashcode);
 
 #endif							/* VCHAIN_HASH_H */

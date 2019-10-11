@@ -17,10 +17,12 @@
 extern Size VChainShmemSize(void);
 extern void VChainInit(void);
 
-extern bool VChainLookupLocator(PrimaryKey primary_key,
+extern bool VChainLookupLocator(Oid rel_node,
+								PrimaryKey primary_key,
 								Snapshot snapshot,
 								VLocator **ret_locator);
-extern void VChainAppendLocator(PrimaryKey primary_key,
+extern void VChainAppendLocator(Oid rel_node,
+								PrimaryKey primary_key,
 								VLocator *locator);
 extern void VChainFixUpOne(VLocator* mid);
 

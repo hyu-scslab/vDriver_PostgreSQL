@@ -1771,8 +1771,10 @@ heap_hot_search_buffer_with_vc(ItemPointer tid, Relation relation,
 	elog(WARNING, "@@ Looking for pkey %d\n", (int) primary_key);
 
 	/* Find the old version from the vcluster */
-	cache_id = VClusterLookupTuple(
-			primary_key, snapshot, (void**) &heapTuple->t_data);
+	cache_id = VClusterLookupTuple(relation->rd_node.relNode,
+								   primary_key,
+								   snapshot,
+								   (void**) &heapTuple->t_data);
 
 	if (VCacheIsValid(cache_id))
 	{
@@ -4031,7 +4033,8 @@ l2:
 			elog(PANIC, "@@ VClusterAppendTuple, xmax < xmin");
 
 		/* Append the version to VCluster */
-		VClusterAppendTuple(primary_key, xmin, xmax, snapshot,
+		VClusterAppendTuple(relation->rd_node.relNode, primary_key,
+							xmin, xmax, snapshot,
 							second_oldtup.t_len, second_oldtup.t_data);
 #if 0
 		{
