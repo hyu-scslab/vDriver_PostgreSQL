@@ -54,14 +54,11 @@ VClusterDesc	*vclusters;
 dsa_area		*dsa_vcluster;
 
 /* decls for local routines only used within this module */
-static void UpdateVersionStatistics(TransactionId xmin,
-									TransactionId xmax,
-									FullTransactionId nextFullId);
-
 static VCLUSTER_TYPE
 VersionClassification(TransactionId xmin,
 					  TransactionId xmax,
-					  FullTransactionId nextFullId);
+					  FullTransactionId nextFullId,
+					  Snapshot snapshot);
 
 static dsa_pointer AllocNewSegmentInternal(dsa_area *dsa,
 										   VCLUSTER_TYPE type);
@@ -119,7 +116,7 @@ VClusterShmemInit(void)
 		vclusters->reserved_seg_id[i] = i + 1;
 	}
 	pg_atomic_init_u32(&vclusters->next_seg_id, VCLUSTER_NUM + 1);
-
+	
 	assert(sizeof(VRecord) == VCLUSTER_TUPLE_SIZE);
 }
 
@@ -347,6 +344,7 @@ void
 VClusterAppendTuple(PrimaryKey primary_key,
 					TransactionId xmin,
 					TransactionId xmax,
+					Snapshot snapshot,
 					Size tuple_size,
 					const void *tuple)
 {
@@ -373,8 +371,7 @@ VClusterAppendTuple(PrimaryKey primary_key,
 #endif
 
 	/* Update the statistics for version classification */
-	UpdateVersionStatistics(
-			xmin, xmax, ShmemVariableCache->nextFullXid);
+	VClusterUpdateVersionStatistics(xmin, xmax);
 
 	/* First prune. */
 	if (RecIsInDeadZone(xmin, xmax)) {
@@ -391,7 +388,7 @@ VClusterAppendTuple(PrimaryKey primary_key,
 
 	/* Decide the version cluster type */
 	cluster_type = VersionClassification(
-			xmin, xmax, ShmemVariableCache->nextFullXid);
+			xmin, xmax, ShmemVariableCache->nextFullXid, snapshot);
 
 retry:
 
@@ -518,13 +515,10 @@ retry:
  *
  * Update the version statistics for classification
  */
-static void
-UpdateVersionStatistics(TransactionId xmin,
-						TransactionId xmax,
-						FullTransactionId nextFullId)
+void
+VClusterUpdateVersionStatistics(TransactionId xmin, TransactionId xmax)
 {
 	uint64	len = xmax - xmin;
-	uint64	old = nextFullId.value - xmax;
 
 	/*
 	 * Average value can be touched by multiple processes so that
@@ -532,20 +526,44 @@ UpdateVersionStatistics(TransactionId xmin,
 	 */
 	if (pg_atomic_test_set_flag(&vclusters->is_updating_stat))
 	{
-		if (unlikely(vclusters->average_len == 0))
-			vclusters->average_len = len;
+		if (unlikely(vclusters->average_ver_len == 0))
+			vclusters->average_ver_len = len;
 		else
-			vclusters->average_len =
-					vclusters->average_len * AVG_STAT_WEIGHT +
+			vclusters->average_ver_len =
+					vclusters->average_ver_len * AVG_STAT_WEIGHT +
 					len * (1.0 - AVG_STAT_WEIGHT);
 		
-		if (unlikely(vclusters->average_old == 0))
-			vclusters->average_old = old;
+		pg_atomic_clear_flag(&vclusters->is_updating_stat);
+	}
+}
+
+/*
+ * VClusterUpdateTransactionStatistics
+ *
+ * Update the transaction statistics (life cycle) for classification
+ */
+void
+VClusterUpdateTransactionStatistics(FullTransactionId xid,
+									FullTransactionId nextFullId)
+{
+	uint64	len = nextFullId.value - xid.value;
+	
+	if (!TransactionIdIsValid(xid.value))
+		return;
+
+	/*
+	 * Average value can be touched by multiple processes so that
+	 * we need to decide only one process to update the value at a time.
+	 */
+	if (pg_atomic_test_set_flag(&vclusters->is_updating_stat))
+	{
+		if (unlikely(vclusters->average_txn_len == 0))
+			vclusters->average_txn_len = len;
 		else
-			vclusters->average_old =
-					vclusters->average_old * AVG_STAT_WEIGHT +
-					old * (1.0 - AVG_STAT_WEIGHT);
-		
+			vclusters->average_txn_len =
+					vclusters->average_txn_len * AVG_STAT_WEIGHT +
+					len * (1.0 - AVG_STAT_WEIGHT);
+
 		pg_atomic_clear_flag(&vclusters->is_updating_stat);
 	}
 }
@@ -558,15 +576,36 @@ UpdateVersionStatistics(TransactionId xmin,
 static VCLUSTER_TYPE
 VersionClassification(TransactionId xmin,
 					  TransactionId xmax,
-					  FullTransactionId nextFullId)
+					  FullTransactionId nextFullId,
+					  Snapshot snapshot)
 {
-	uint64_t	len = xmax - xmin;
-	uint64_t	old = nextFullId.value - xmax;
+	uint64_t		len;
+	uint64_t		llt_boundary;
+	TransactionId	recent_oldest_xid;
 
-	if (len > vclusters->average_len * CLASSIFICATION_THRESHOLD)
+	/* HOT/COLD Classification */
+	len = xmax - xmin;
+	if (len > vclusters->average_ver_len * CLASSIFICATION_THRESHOLD)
 		return VCLUSTER_COLD;
-	
-	if (old > vclusters->average_old * CLASSIFICATION_THRESHOLD)
+
+	/* LLT Classification */
+	llt_boundary = nextFullId.value -
+			(vclusters->average_txn_len * CLASSIFICATION_THRESHOLD);
+	recent_oldest_xid = 0;
+
+	for (int i = 0; i < snapshot->xcnt; i++)
+	{
+		/* Find most recent transaction among llt in the snapshot */
+		if (snapshot->xip[i] <= llt_boundary &&
+			snapshot->xip[i] > recent_oldest_xid)
+			recent_oldest_xid = snapshot->xip[i];
+	}
+
+	/*
+	 * If the version is possibly visible by an LLT,
+	 * classify it into LLT cluster.
+	 */
+	if (xmin <= recent_oldest_xid)
 		return VCLUSTER_LLT;
 	
 	return VCLUSTER_HOT;

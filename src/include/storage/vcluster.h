@@ -142,10 +142,10 @@ typedef struct {
 	char				pad2[PG_CACHE_LINE_SIZE];
 
 	/* stat value for HOT/COLD classification */
-	double				average_len;
+	double				average_ver_len;
 
 	/* stat value for LLT classification */
-	double				average_old;
+	double				average_txn_len;
 	
 } VClusterDesc;
 
@@ -160,6 +160,10 @@ extern void VClusterDetachDsa(void);
 extern pid_t StartVCutter(void);
 extern pid_t StartGC(void);
 
+void VClusterUpdateVersionStatistics(TransactionId xmin, TransactionId xmax);
+void VClusterUpdateTransactionStatistics(FullTransactionId xid,
+										 FullTransactionId nextFullId);
+
 #if 0
 extern bool VClusterLookupTuple(PrimaryKey primary_key,
 								Size size,
@@ -173,6 +177,7 @@ extern int VClusterLookupTuple(PrimaryKey primary_key,
 extern void VClusterAppendTuple(PrimaryKey primary_key,
 								TransactionId xmin,
 								TransactionId xmax,
+								Snapshot snapshot,
 								Size tuple_size,
 								const void *tuple);
 

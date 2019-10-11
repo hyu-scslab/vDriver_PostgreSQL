@@ -55,6 +55,9 @@
 #include "storage/procarray.h"
 #include "storage/sinvaladt.h"
 #include "storage/smgr.h"
+#ifdef HYU_LLT
+#include "storage/vcluster.h"
+#endif
 #include "utils/builtins.h"
 #include "utils/catcache.h"
 #include "utils/combocid.h"
@@ -2252,6 +2255,11 @@ CommitTransaction(void)
 	TopTransactionResourceOwner = NULL;
 
 	AtCommit_Memory();
+
+#ifdef HYU_LLT
+	VClusterUpdateTransactionStatistics(s->fullTransactionId,
+										ShmemVariableCache->nextFullXid);
+#endif
 
 	s->fullTransactionId = InvalidFullTransactionId;
 	s->subTransactionId = InvalidSubTransactionId;

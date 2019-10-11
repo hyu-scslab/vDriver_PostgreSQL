@@ -4031,7 +4031,7 @@ l2:
 			elog(PANIC, "@@ VClusterAppendTuple, xmax < xmin");
 
 		/* Append the version to VCluster */
-		VClusterAppendTuple(primary_key, xmin, xmax,
+		VClusterAppendTuple(primary_key, xmin, xmax, snapshot,
 							second_oldtup.t_len, second_oldtup.t_data);
 #if 0
 		{
