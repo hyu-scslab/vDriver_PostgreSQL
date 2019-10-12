@@ -39,6 +39,10 @@
 #include "tcop/tcopprot.h"
 #include "utils/builtins.h"
 #include "utils/timestamp.h"
+#ifdef HYU_LLT
+#include "storage/vcluster.h"
+#include "storage/vstatistic.h"
+#endif
 
 
 /*
@@ -192,6 +196,27 @@ current_query(PG_FUNCTION_ARGS)
 	else
 		PG_RETURN_NULL();
 }
+/* HYU_LLT print-stat-helper */
+/*
+ * llt_get_stat()
+ * this function is defined in ./include/catalog/pg_proc.dat
+ * print statistic about vDriver
+ */
+Datum
+llt_get_stat(PG_FUNCTION_ARGS)
+{
+#ifdef HYU_LLT
+#ifdef HYU_LLT_STAT
+    char string[400];
+    sprintf(string, "kkkkkkkk\nnnnnnnnnn%ld", vstatistic_desc->cnt_inserted);
+    PG_RETURN_TEXT_P(cstring_to_text(string));
+#ifdef HYU_LLT_STAT
+#endif
+
+    PG_RETURN_NULL();
+}
+
+/* HYU_LLT end */
 
 /* Function to find out which databases make use of a tablespace */
 
