@@ -210,7 +210,7 @@ llt_get_stat(PG_FUNCTION_ARGS)
     char string[400];
     sprintf(string, "kkkkkkkk\nnnnnnnnnn%ld", vstatistic_desc->cnt_inserted);
     PG_RETURN_TEXT_P(cstring_to_text(string));
-#ifdef HYU_LLT_STAT
+#endif
 #endif
 
     PG_RETURN_NULL();
