@@ -529,7 +529,7 @@ find_cand:
 			xmin = PG_UINT32_MAX;
 			xmax = 0;
 			for (offset = 0; offset < SEG_PAGESZ; offset += VCLUSTER_TUPLE_SIZE) {
-				record = (VRecord*) &VCacheBlocks[cache_id * SEG_PAGESZ + offset];
+				record = (VRecord*) &VCacheBlocks[candidate_id * SEG_PAGESZ + offset];
 				if (record->xmin < xmin)
 					xmin = record->xmin;
 				if (xmax < record->xmax)
