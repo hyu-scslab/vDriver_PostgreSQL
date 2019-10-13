@@ -42,6 +42,7 @@
 #ifdef HYU_LLT
 #include "storage/vcluster.h"
 #include "storage/vstatistic.h"
+#include "storage/vcache.h"
 #endif
 
 
@@ -207,8 +208,66 @@ llt_get_stat(PG_FUNCTION_ARGS)
 {
 #ifdef HYU_LLT
 #ifdef HYU_LLT_STAT
-    char string[400];
-    sprintf(string, "kkkkkkkk\nnnnnnnnnn%ld", vstatistic_desc->cnt_inserted);
+    char string[4000];
+    uint64_t record_per_page = SEG_PAGESZ / VCLUSTER_TUPLE_SIZE;
+    sprintf(string,
+            "_inserted record_               : %8lu\n"
+            "_inserted record HOT_           : %8lu\n"
+            "_inserted record COLD_          : %8lu\n"
+            "_inserted record LLT_           : %8lu\n"
+            "\n"
+            "_first pruned record_           : %8lu\n"
+            "_first pruned record HOT_       : %8lu\n"
+            "_first pruned record COLD_      : %8lu\n"
+            "_first pruned record LLT_       : %8lu\n"
+            "\n"
+            "_not first pruned record_       : %8lu\n"
+            "_not first pruned record HOT_   : %8lu\n"
+            "_not first pruned record COLD_  : %8lu\n"
+            "_not first pruned record LLT_   : %8lu\n"
+            "\n"
+            "_evicted record_                : %8lu\n"
+            "_evicted record HOT_            : %8lu\n"
+            "_evicted record COLD_           : %8lu\n"
+            "_evicted record LLT_            : %8lu\n"
+            "\n"
+            "_second pruned record_          : %8lu\n"
+            "_second pruned record HOT_      : %8lu\n"
+            "_second pruned record COLD_     : %8lu\n"
+            "_second pruned record LLT_      : %8lu\n"
+            "\n"
+            "_logical deleted record_        : %8lu\n"
+            "_logical deleted segment_       : %8lu\n"
+            "_physical deleted segment_      : %8lu\n",
+            vstatistic_desc->cnt_inserted,
+            vstatistic_desc->cnt_inserted_cluster[VCLUSTER_HOT],
+            vstatistic_desc->cnt_inserted_cluster[VCLUSTER_COLD],
+            vstatistic_desc->cnt_inserted_cluster[VCLUSTER_LLT],
+
+            vstatistic_desc->cnt_first_prune,
+            vstatistic_desc->cnt_first_prune_cluster[VCLUSTER_HOT],
+            vstatistic_desc->cnt_first_prune_cluster[VCLUSTER_COLD],
+            vstatistic_desc->cnt_first_prune_cluster[VCLUSTER_LLT],
+
+            vstatistic_desc->cnt_after_first_prune,
+            vstatistic_desc->cnt_after_first_prune_cluster[VCLUSTER_HOT],
+            vstatistic_desc->cnt_after_first_prune_cluster[VCLUSTER_COLD],
+            vstatistic_desc->cnt_after_first_prune_cluster[VCLUSTER_LLT],
+
+            vstatistic_desc->cnt_page_evicted * record_per_page,
+            vstatistic_desc->cnt_page_evicted_cluster[VCLUSTER_HOT] * record_per_page,
+            vstatistic_desc->cnt_page_evicted_cluster[VCLUSTER_COLD] * record_per_page,
+            vstatistic_desc->cnt_page_evicted_cluster[VCLUSTER_LLT] * record_per_page,
+
+            vstatistic_desc->cnt_page_second_prune * record_per_page,
+            vstatistic_desc->cnt_page_second_prune_cluster[VCLUSTER_HOT] * record_per_page,
+            vstatistic_desc->cnt_page_second_prune_cluster[VCLUSTER_COLD] * record_per_page,
+            vstatistic_desc->cnt_page_second_prune_cluster[VCLUSTER_LLT] * record_per_page,
+
+            vstatistic_desc->cnt_logical_deleted,
+            vstatistic_desc->cnt_seg_logical_deleted,
+            vstatistic_desc->cnt_seg_physical_deleted
+           );
     PG_RETURN_TEXT_P(cstring_to_text(string));
 #endif
 #endif

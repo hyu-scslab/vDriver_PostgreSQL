@@ -82,9 +82,19 @@ VStatisticInit(void)
 	vstatistic_desc->cnt_first_prune = 0;
 	vstatistic_desc->cnt_after_first_prune = 0;
 	vstatistic_desc->cnt_page_evicted = 0;
+	vstatistic_desc->cnt_page_second_prune = 0;
+
 	vstatistic_desc->cnt_logical_deleted = 0;
 	vstatistic_desc->cnt_seg_logical_deleted = 0;
 	vstatistic_desc->cnt_seg_physical_deleted = 0;
+
+    for (int i = 0; i < VCLUSTER_NUM; i++) {
+        vstatistic_desc->cnt_inserted_cluster[i] = 0;
+        vstatistic_desc->cnt_first_prune_cluster[i] = 0;
+        vstatistic_desc->cnt_after_first_prune_cluster[i] = 0;
+        vstatistic_desc->cnt_page_evicted_cluster[i] = 0;
+        vstatistic_desc->cnt_page_second_prune_cluster[i] = 0;
+    }
 }
 
 /*

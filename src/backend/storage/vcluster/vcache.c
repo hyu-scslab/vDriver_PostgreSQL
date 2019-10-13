@@ -40,7 +40,6 @@ VCacheDescPadded	*VCacheDescriptors;
 char				*VCacheBlocks;
 VCacheMeta		 	*VCache;
 
-#define SEG_PAGESZ					(BLCKSZ)
 #define SEG_OFFSET_TO_PAGE_ID(off)  ((off) / (SEG_PAGESZ))
 
 /*
@@ -160,6 +159,7 @@ VCacheAppendTuple(VSegmentId seg_id,
 				  VSegmentOffset seg_offset,
 				  Size tuple_size,
 				  const void *tuple,
+                  VCLUSTER_TYPE cluster_type,
 				  TransactionId xmin,
 				  TransactionId xmax)
 {
@@ -191,6 +191,7 @@ VCacheAppendTuple(VSegmentId seg_id,
 	/* Write xmin and xmax. It is used to second-prune. */
 	/* FIXME: It's really hard coding.. */
 	record = (VRecord*) &VCacheBlocks[cache_id * SEG_PAGESZ + page_offset];
+    record->cluster_type = cluster_type;
 	record->xmin = xmin;
 	record->xmax = xmax;
 
@@ -523,23 +524,36 @@ find_cand:
 			TransactionId xmin, xmax;
 			VRecord* record;
 #ifdef HYU_LLT_STAT
-			__sync_fetch_and_add(&vstatistic_desc->cnt_page_evicted, 1);
+            VCLUSTER_TYPE cluster_type;
 #endif
 
 			xmin = PG_UINT32_MAX;
 			xmax = 0;
 			for (offset = 0; offset < SEG_PAGESZ; offset += VCLUSTER_TUPLE_SIZE) {
-				record = (VRecord*) &VCacheBlocks[cache_id * SEG_PAGESZ + offset];
+				record = (VRecord*) &VCacheBlocks[candidate_id * SEG_PAGESZ + offset];
+#ifdef HYU_LLT_STAT
+                if (offset == 0)
+                    cluster_type = record->cluster_type;
+                assert(cluster_type == record->cluster_type);
+#endif
 				if (record->xmin < xmin)
 					xmin = record->xmin;
 				if (xmax < record->xmax)
 					xmax = record->xmax;
 			}
+#ifdef HYU_LLT_STAT
+            __sync_fetch_and_add(&vstatistic_desc->cnt_page_evicted, 1);
+            __sync_fetch_and_add(
+                    &vstatistic_desc->cnt_page_evicted_cluster[cluster_type], 1);
+#endif
 
 			if (SegIsInDeadZone(xmin, xmax)) {
-				/* It can be prune. */
+				/* It can be pruned. */
+                /* Second prune. */
 #ifdef HYU_LLT_STAT
 				__sync_fetch_and_add(&vstatistic_desc->cnt_page_second_prune, 1);
+                __sync_fetch_and_add(
+                        &vstatistic_desc->cnt_page_second_prune_cluster[cluster_type], 1);
 #endif
 			}
 			else {

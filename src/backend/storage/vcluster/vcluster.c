@@ -364,34 +364,37 @@ VClusterAppendTuple(Oid rel_node,
 	 */
 	Size			aligned_tuple_size;
 	
-	Assert(cluster_type == VCLUSTER_HOT ||
-		   cluster_type == VCLUSTER_COLD ||
-		   cluster_type == VCLUSTER_LLT);
-
 	Assert(dsa_vcluster != NULL);
-#ifdef HYU_LLT_STAT
-	__sync_fetch_and_add(&vstatistic_desc->cnt_inserted, 1);
-#endif
 
 	/* Update the statistics for version classification */
 	VClusterUpdateVersionStatistics(xmin, xmax);
+
+	/* Decide the version cluster type */
+	cluster_type = VersionClassification(
+			xmin, xmax, ShmemVariableCache->nextFullXid, snapshot);
+
+	Assert(cluster_type == VCLUSTER_HOT ||
+		   cluster_type == VCLUSTER_COLD ||
+		   cluster_type == VCLUSTER_LLT);
+#ifdef HYU_LLT_STAT
+	__sync_fetch_and_add(&vstatistic_desc->cnt_inserted, 1);
+    __sync_fetch_and_add(&vstatistic_desc->cnt_inserted_cluster[cluster_type], 1);
+#endif
 
 	/* First prune. */
 	if (RecIsInDeadZone(xmin, xmax)) {
 #ifdef HYU_LLT_STAT
 		__sync_fetch_and_add(&vstatistic_desc->cnt_first_prune, 1);
+        __sync_fetch_and_add(&vstatistic_desc->cnt_first_prune_cluster[cluster_type], 1);
 #endif
 		return;
 	}
 #ifdef HYU_LLT_STAT
 	__sync_fetch_and_add(&vstatistic_desc->cnt_after_first_prune, 1);
+    __sync_fetch_and_add(&vstatistic_desc->cnt_after_first_prune_cluster[cluster_type], 1);
 #endif
 
 	aligned_tuple_size = 1 << my_log2(tuple_size);
-
-	/* Decide the version cluster type */
-	cluster_type = VersionClassification(
-			xmin, xmax, ShmemVariableCache->nextFullXid, snapshot);
 
 retry:
 
@@ -438,6 +441,7 @@ retry:
 						  alloc_seg_offset,
 						  tuple_size,
 						  tuple,
+                          cluster_type,
 						  xmin,
 						  xmax);
 		
@@ -593,7 +597,7 @@ VersionClassification(TransactionId xmin,
 
 	/* LLT Classification */
 	llt_boundary = nextFullId.value -
-			(vclusters->average_txn_len * CLASSIFICATION_THRESHOLD);
+			(vclusters->average_txn_len * 2 * CLASSIFICATION_THRESHOLD);
 	recent_oldest_xid = 0;
 
 	for (int i = 0; i < snapshot->xcnt; i++)

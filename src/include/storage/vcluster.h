@@ -19,12 +19,13 @@
 #include "utils/dynahash.h"
 #include "utils/timestamp.h"
 
-typedef enum {
+enum {
 	VCLUSTER_HOT,
 	VCLUSTER_COLD,
 	VCLUSTER_LLT,
 	VCLUSTER_NUM = 3
-} VCLUSTER_TYPE;
+};
+typedef uint32_t VCLUSTER_TYPE;
 
 /* Size of a segment of a version cluster */
 #define VCLUSTER_SEGSIZE    (16*1024*1024)
@@ -32,11 +33,12 @@ typedef enum {
 /* Version tuple size */
 #define VCLUSTER_TUPLE_SIZE	(256)	/* TODO: move this to configuration */
 
-#define VCLUSTER_TUPLE_LEN	(VCLUSTER_TUPLE_SIZE - 8)
+#define VCLUSTER_TUPLE_LEN	(VCLUSTER_TUPLE_SIZE - 12)
 /* Layout of one record on VSegment. Size must be VCLUSTER_TUPLE_SIZE. */
 /* These are used to second-prune. */
 typedef struct {
 	char tuple[VCLUSTER_TUPLE_LEN];
+    VCLUSTER_TYPE cluster_type;
 	TransactionId xmin;
 	TransactionId xmax;
 } VRecord;
