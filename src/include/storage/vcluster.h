@@ -13,6 +13,7 @@
 #define VCLUSTER_H
 
 #include "c.h"
+#include "portability/instr_time.h"
 #include "utils/dsa.h"
 #include "utils/snapshot.h"
 #include "utils/snapmgr.h"
@@ -109,6 +110,12 @@ typedef struct {
 
 	/* Just embed segment index into here  */
 	VLocator			locators[VCLUSTER_SEG_NUM_ENTRY];
+
+#ifdef HYU_LLT_STAT
+	/* The time this segment has been full */
+	instr_time			filled_time;
+#endif
+
 } VSegmentDesc;
 
 typedef struct {
