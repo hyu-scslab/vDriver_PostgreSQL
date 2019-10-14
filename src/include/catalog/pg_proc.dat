@@ -1709,6 +1709,11 @@
   proname => 'current_query', proisstrict => 'f', provolatile => 'v',
   proparallel => 'r', prorettype => 'text', proargtypes => '',
   prosrc => 'current_query' },
+# HYU_LLT
+{ oid => '815', descr => 'my custom function',
+  proname => 'llt_get_stat', proisstrict => 'f', provolatile => 'v',
+  proparallel => 'r', prorettype => 'text', proargtypes => '',
+  prosrc => 'llt_get_stat' },
 
 { oid => '3399',
   proname => 'int8_mul_cash', prorettype => 'money',

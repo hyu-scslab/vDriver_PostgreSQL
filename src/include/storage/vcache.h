@@ -15,6 +15,8 @@
 #include "port/atomics.h"
 #include "storage/vcluster.h"
 
+#define SEG_PAGESZ					(BLCKSZ)
+
 typedef struct VCacheTag
 {
 	VSegmentId		seg_id;
@@ -109,6 +111,7 @@ extern void VCacheAppendTuple(VSegmentId seg_id,
 							  VSegmentOffset seg_offset,
 				  			  Size tuple_size,
 				  			  const void *tuple,
+                              VCLUSTER_TYPE cluster_type,
 							  TransactionId xmin,
 							  TransactionId xmax);
 extern int VCacheReadTupleRef(VSegmentId seg_id,

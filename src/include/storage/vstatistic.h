@@ -27,17 +27,27 @@ typedef struct {
 	/* number of inserted-records */
 	int64_t			cnt_inserted;
 
+    int64_t         cnt_inserted_cluster[VCLUSTER_NUM];
+
 	/* about pruned-records */
 	int64_t			cnt_first_prune;
+
+	int64_t			cnt_first_prune_cluster[VCLUSTER_NUM];
 
 	/* number of records which is not first-pruned */
 	int64_t			cnt_after_first_prune;
 
+	int64_t			cnt_after_first_prune_cluster[VCLUSTER_NUM];
+
 	/* number of evicted-pages */
 	int64_t			cnt_page_evicted;
 
+	int64_t			cnt_page_evicted_cluster[VCLUSTER_NUM];
+
 	/* about second-pruned-pages */
 	int64_t			cnt_page_second_prune;
+
+	int64_t			cnt_page_second_prune_cluster[VCLUSTER_NUM];
 
 	/* number of logically-deleted-records */
 	int64_t			cnt_logical_deleted;
