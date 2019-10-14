@@ -46,6 +46,9 @@
 #include <signal.h>
 
 #include "access/clog.h"
+#ifdef HYU_LLT
+#include "access/parallel.h"
+#endif
 #include "access/subtrans.h"
 #include "access/transam.h"
 #include "access/twophase.h"
@@ -1532,6 +1535,21 @@ GetSnapshotData(Snapshot snapshot)
 	TransactionId replication_slot_catalog_xmin = InvalidTransactionId;
 
 	Assert(snapshot != NULL);
+
+#ifdef HYU_LLT
+	/*
+	 * For LLT classification, long transaction need to allocate its id and
+	 * publish it so that we can see it in the snapshot of the transaction
+	 * classifying a version.
+	 * A read-only long transaction doesn't allocate its id in original postgres,
+	 * so we naively allocate transaction id for any transaction capturing
+	 * its own snapshot.
+	 */
+	if (!(IsInParallelMode() || IsParallelWorker()))
+	{
+		GetCurrentTransactionId();
+	}
+#endif
 
 	/*
 	 * Allocating space for maxProcs xids is usually overkill; numProcs would

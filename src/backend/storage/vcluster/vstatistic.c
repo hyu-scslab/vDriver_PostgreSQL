@@ -219,7 +219,6 @@ PrintStatistics(void)
 				cnt_seg_physical_deleted * VCLUSTER_SEG_NUM_ENTRY,
 				delta_deleted_inserted
 			);
-
 #if 0
 		for (int i = 0; i < NUM_CUTTIME_BUCKET; i++)
 		{

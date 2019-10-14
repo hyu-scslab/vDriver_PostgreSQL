@@ -44,8 +44,9 @@
 
 #include "storage/vcluster.h"
 
-#define AVG_STAT_WEIGHT				(0.9999)
-#define CLASSIFICATION_THRESHOLD	(10)
+#define AVG_STAT_WEIGHT					(0.9999)
+#define CLASSIFICATION_THRESHOLD_COLD	(10)
+#define CLASSIFICATION_THRESHOLD_LLT	(200)
 
 /* vcluster descriptor in shared memory*/
 VClusterDesc	*vclusters;
@@ -596,12 +597,12 @@ VersionClassification(TransactionId xmin,
 
 	/* HOT/COLD Classification */
 	len = xmax - xmin;
-	if (len > vclusters->average_ver_len * CLASSIFICATION_THRESHOLD)
+	if (len > vclusters->average_ver_len * CLASSIFICATION_THRESHOLD_COLD)
 		return VCLUSTER_COLD;
 
 	/* LLT Classification */
 	llt_boundary = nextFullId.value -
-			(vclusters->average_txn_len * 2 * CLASSIFICATION_THRESHOLD);
+			(vclusters->average_txn_len * CLASSIFICATION_THRESHOLD_LLT);
 	recent_oldest_xid = 0;
 
 	for (int i = 0; i < snapshot->xcnt; i++)
