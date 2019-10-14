@@ -424,7 +424,14 @@ ProcArrayEndTransaction(PGPROC *proc, TransactionId latestXid)
 			LWLockRelease(ProcArrayLock);
 		}
 		else
+		{
+#ifdef HYU_LLT
+			LWLockAcquire(ProcArrayLock, LW_SHARED);
+			ClearSnapshot();
+			LWLockRelease(ProcArrayLock);
+#endif
 			ProcArrayGroupClearXid(proc, latestXid);
+		}
 	}
 	else
 	{
@@ -434,6 +441,11 @@ ProcArrayEndTransaction(PGPROC *proc, TransactionId latestXid)
 		 * estimate of global xmin, but that's OK.
 		 */
 		Assert(!TransactionIdIsValid(allPgXact[proc->pgprocno].xid));
+#ifdef HYU_LLT
+			LWLockAcquire(ProcArrayLock, LW_SHARED);
+			ClearSnapshot();
+			LWLockRelease(ProcArrayLock);
+#endif
 
 		proc->lxid = InvalidLocalTransactionId;
 		pgxact->xmin = InvalidTransactionId;

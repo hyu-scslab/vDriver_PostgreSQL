@@ -169,7 +169,7 @@ CopySnapshotTable(SnapshotTable table)
 	/* FIXME: is it posibble??
 	 * *table = *snapshot_table */
 	for (int i = 0; i < THREAD_TABLE_SIZE; i++) {
-		for (int j = 0; j < SNAPSHOT_SIZE; j++) {
+		for (int j = 0; j < snapshot_table[i].cnt; j++) {
 			table[i].snapshot[j] = snapshot_table[i].snapshot[j];
 		}
 		table[i].cnt = snapshot_table[i].cnt;

@@ -131,7 +131,7 @@ int			max_parallel_maintenance_workers = 2;
 int			NBuffers = 1000;
 #ifdef HYU_LLT
 /* TODO: Parameterize it - jongbin */
-int			NVCache = 1000;
+int			NVCache = 10000;
 int			NVChainExpected = 10000000;
 #endif
 int			MaxConnections = 90;

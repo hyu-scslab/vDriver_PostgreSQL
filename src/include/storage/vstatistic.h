@@ -18,8 +18,8 @@
 #include "utils/snapmgr.h"
 #include "utils/timestamp.h"
 
-
-
+#define NUM_CUTTIME_BUCKET		1000
+#define CUTTIME_BUCKET_UNIT		1000	/* x microsec */
 
 
 /* vDriver statistics descriptor */
@@ -57,6 +57,9 @@ typedef struct {
 
 	/* number of physically-deleted-segment */
 	int64_t			cnt_seg_physical_deleted;
+
+	/* bucket of segment cuttime */
+	uint32			bucket_cuttime[NUM_CUTTIME_BUCKET];
 } VStatisticDesc;
 
 
@@ -66,6 +69,7 @@ extern VStatisticDesc*	vstatistic_desc;
 
 extern Size VStatisticShmemSize(void);
 extern void VStatisticInit(void);
+extern void VStatisticUpdateCuttime(uint64 cuttime_us);
 
 extern pid_t StartMonitor(void);
 

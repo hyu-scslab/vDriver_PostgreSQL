@@ -478,6 +478,10 @@ retry:
 			/* Cutter may decide by xmax whether xmin/xmax of
 			 * this segment desc is updated or not.
 			 * So xmax must be updated after xmin. */
+#ifdef HYU_LLT_STAT
+			/* Set the time this segment has been full */
+			INSTR_TIME_SET_CURRENT(seg_desc->filled_time);
+#endif
 			pg_memory_barrier();
 			seg_desc->xmax = xmax;
 		}
@@ -726,6 +730,10 @@ CutVSegDesc(VCLUSTER_TYPE cluster_type)
 	VSegmentDesc*	victim_prev;
 	dsa_pointer		dsap_old_tail;
 	VSegmentDesc*	old_tail;
+#ifdef HYU_LLT_STAT
+	instr_time		curr_time;
+	uint64			cuttime_us;
+#endif
 
 start_from_head:
 	/* Find cuttable segment des */
@@ -751,6 +759,17 @@ start_from_head:
 			/* It is not dead. */
 			goto next;
 		}
+
+#ifdef HYU_LLT_STAT
+		/* Measures the time duration between the segment be full and cut */
+		INSTR_TIME_SET_CURRENT(curr_time);
+
+		/* curr_time -= victim->filled_time */
+		INSTR_TIME_SUBTRACT(curr_time, victim->filled_time);
+
+		cuttime_us = INSTR_TIME_GET_MICROSEC(curr_time);
+		VStatisticUpdateCuttime(cuttime_us);
+#endif
 
 		/* We can cut this segment. */
 		CutSegment(victim);
