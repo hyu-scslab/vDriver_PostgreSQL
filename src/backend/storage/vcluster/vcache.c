@@ -513,7 +513,17 @@ find_cand:
 		 * included in the file of cutted-segment */
 		uint64_t flag;
 		VSegmentId seg_id;
+        TransactionId xmin = 0, xmax = 0;
+#ifdef HYU_LLT_STAT
+        VCLUSTER_TYPE cluster_type;
+#endif
 
+#ifdef HYU_LLT_STAT
+        cluster_type = ((VRecord*) &VCacheBlocks[candidate_id * SEG_PAGESZ])->cluster_type;
+        __sync_fetch_and_add(&vstatistic_desc->cnt_page_evicted, 1);
+        __sync_fetch_and_add(
+                &vstatistic_desc->cnt_page_evicted_cluster[cluster_type], 1);
+#endif
 		seg_id = cache->tag.seg_id;
 		flag = __sync_fetch_and_add(&VCache->cutting_flag[seg_id], 1);
 		if (!CF_IS_CUT(flag)) {
@@ -521,40 +531,21 @@ find_cand:
 
 			/* Iterate the page and get xmin and xmax. */
 			int offset;
-			TransactionId xmin, xmax;
 			VRecord* record;
-#ifdef HYU_LLT_STAT
-            VCLUSTER_TYPE cluster_type;
-#endif
 
 			xmin = PG_UINT32_MAX;
 			xmax = 0;
 			for (offset = 0; offset < SEG_PAGESZ; offset += VCLUSTER_TUPLE_SIZE) {
 				record = (VRecord*) &VCacheBlocks[candidate_id * SEG_PAGESZ + offset];
-#ifdef HYU_LLT_STAT
-                if (offset == 0)
-                    cluster_type = record->cluster_type;
-                assert(cluster_type == record->cluster_type);
-#endif
 				if (record->xmin < xmin)
 					xmin = record->xmin;
 				if (xmax < record->xmax)
 					xmax = record->xmax;
 			}
-#ifdef HYU_LLT_STAT
-            __sync_fetch_and_add(&vstatistic_desc->cnt_page_evicted, 1);
-            __sync_fetch_and_add(
-                    &vstatistic_desc->cnt_page_evicted_cluster[cluster_type], 1);
-#endif
 
 			if (SegIsInDeadZone(xmin, xmax)) {
 				/* It can be pruned. */
                 /* Second prune. */
-#ifdef HYU_LLT_STAT
-				__sync_fetch_and_add(&vstatistic_desc->cnt_page_second_prune, 1);
-                __sync_fetch_and_add(
-                        &vstatistic_desc->cnt_page_second_prune_cluster[cluster_type], 1);
-#endif
 			}
 			else {
 				/* It's not in dead zone. Flush it. */
@@ -569,6 +560,21 @@ find_cand:
 				VCacheRemoveSegmentFile(seg_id);
 			}
 		}
+#ifdef HYU_LLT_STAT
+        if (xmin != 0 && xmax != 0) {
+            if (SegIsInDeadZone(xmin, xmax)) {
+				__sync_fetch_and_add(&vstatistic_desc->cnt_page_second_prune, 1);
+                __sync_fetch_and_add(
+                        &vstatistic_desc->cnt_page_second_prune_cluster[cluster_type], 1);
+            }
+        }
+        else if (CF_IS_CUT(flag)) {
+            __sync_fetch_and_add(&vstatistic_desc->cnt_page_second_prune, 1);
+            __sync_fetch_and_add(
+                    &vstatistic_desc->cnt_page_second_prune_cluster[cluster_type], 1);
+        }
+
+#endif
 
 		/*
 		 * We do not zero the page so that the page could be overwritten
