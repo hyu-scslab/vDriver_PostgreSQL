@@ -47,6 +47,7 @@ typedef struct {
 	TransactionId				snapshot[SNAPSHOT_SIZE];
 	int							cnt; /* size of snapshot */
 	TransactionId				xmax;
+	TransactionId				owner;
 } SnapshotTableNode;
 
 typedef SnapshotTableNode*		SnapshotTable;
@@ -75,6 +76,7 @@ extern TimestampTz GetMinimumTimestamp(void);
 extern void SetSnapshot(TransactionId*	snapshot,
 						int 			cnt,
 						TransactionId	xmax);
+extern void SetSnapshotOwner(TransactionId owner);
 extern void ClearSnapshot(void);
 extern void CopySnapshotTable(SnapshotTable table);
 extern SnapshotTable AllocSnapshotTable(void);

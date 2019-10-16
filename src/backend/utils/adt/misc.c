@@ -275,6 +275,37 @@ llt_get_stat(PG_FUNCTION_ARGS)
     PG_RETURN_NULL();
 }
 
+Datum
+llt_get_cuttime(PG_FUNCTION_ARGS)
+{
+#ifdef HYU_LLT
+#ifdef HYU_LLT_STAT
+    char string[16384];
+	char tmp[1024];
+
+	string[0] = '\0';
+	tmp[0] = '\0';
+	for (int i = 0; i < NUM_CUTTIME_BUCKET; i++)
+	{
+		if (vstatistic_desc->bucket_cuttime[i] > 0)
+		{
+			sprintf(tmp, "%8lu %8lu %8lu\n",
+				CUTTIME_BUCKET_UNIT * i,
+				CUTTIME_BUCKET_UNIT * (i + 1),
+				vstatistic_desc->bucket_cuttime[i]);
+
+			strcat(string, tmp);
+		}
+	}
+
+    PG_RETURN_TEXT_P(cstring_to_text(string));
+#endif
+#endif
+
+    PG_RETURN_NULL();
+}
+
+
 /* HYU_LLT end */
 
 /* Function to find out which databases make use of a tablespace */

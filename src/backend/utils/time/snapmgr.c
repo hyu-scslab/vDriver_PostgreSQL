@@ -346,7 +346,11 @@ GetTransactionSnapshot(void)
 			if (IsolationIsSerializable())
 				CurrentSnapshot = GetSerializableTransactionSnapshot(&CurrentSnapshotData);
 			else
+#ifdef HYU_LLT
+				CurrentSnapshot = GetSnapshotData(&CurrentSnapshotData, true);
+#else
 				CurrentSnapshot = GetSnapshotData(&CurrentSnapshotData);
+#endif
 			/* Make a saved copy */
 			CurrentSnapshot = CopySnapshot(CurrentSnapshot);
 			FirstXactSnapshot = CurrentSnapshot;
@@ -355,7 +359,11 @@ GetTransactionSnapshot(void)
 			pairingheap_add(&RegisteredSnapshots, &FirstXactSnapshot->ph_node);
 		}
 		else
+#ifdef HYU_LLT
+			CurrentSnapshot = GetSnapshotData(&CurrentSnapshotData, true);
+#else
 			CurrentSnapshot = GetSnapshotData(&CurrentSnapshotData);
+#endif
 
 		FirstSnapshotSet = true;
 		return CurrentSnapshot;
@@ -367,7 +375,11 @@ GetTransactionSnapshot(void)
 	/* Don't allow catalog snapshot to be older than xact snapshot. */
 	InvalidateCatalogSnapshot();
 
+#ifdef HYU_LLT
+	CurrentSnapshot = GetSnapshotData(&CurrentSnapshotData, true);
+#else
 	CurrentSnapshot = GetSnapshotData(&CurrentSnapshotData);
+#endif
 
 	return CurrentSnapshot;
 }
@@ -398,7 +410,11 @@ GetLatestSnapshot(void)
 	if (!FirstSnapshotSet)
 		return GetTransactionSnapshot();
 
+#ifdef HYU_LLT
+	SecondarySnapshot = GetSnapshotData(&SecondarySnapshotData, true);
+#else
 	SecondarySnapshot = GetSnapshotData(&SecondarySnapshotData);
+#endif
 
 	return SecondarySnapshot;
 }
@@ -478,7 +494,11 @@ GetNonHistoricCatalogSnapshot(Oid relid)
 	if (CatalogSnapshot == NULL)
 	{
 		/* Get new snapshot. */
+#ifdef HYU_LLT
+		CatalogSnapshot = GetSnapshotData(&CatalogSnapshotData, false);
+#else
 		CatalogSnapshot = GetSnapshotData(&CatalogSnapshotData);
+#endif
 
 		/*
 		 * Make sure the catalog snapshot will be accounted for in decisions
@@ -585,7 +605,11 @@ SetTransactionSnapshot(Snapshot sourcesnap, VirtualTransactionId *sourcevxid,
 	 * two variables in exported snapshot files, but it seems better to have
 	 * snapshot importers compute reasonably up-to-date values for them.)
 	 */
+#ifdef HYU_LLT
+	CurrentSnapshot = GetSnapshotData(&CurrentSnapshotData, true);
+#else
 	CurrentSnapshot = GetSnapshotData(&CurrentSnapshotData);
+#endif
 
 	/*
 	 * Now copy appropriate fields from the source snapshot.
