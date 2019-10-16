@@ -46,7 +46,7 @@
 
 #define AVG_STAT_WEIGHT					(0.9999)
 #define CLASSIFICATION_THRESHOLD_COLD	(10)
-#define CLASSIFICATION_THRESHOLD_LLT	(200)
+#define CLASSIFICATION_THRESHOLD_LLT	(200)//(40000) //(200)
 
 /* vcluster descriptor in shared memory*/
 VClusterDesc	*vclusters;
@@ -668,6 +668,10 @@ AllocNewSegmentInternal(dsa_area *dsa, VCLUSTER_TYPE cluster_type)
 	/* Allocate a new segment file */
 	VCacheCreateSegmentFile(new_seg_id);
 
+	ereport(LOG, (errmsg("@@ AllocNewSegmentInternal, seg: %d, type: %d",
+				new_seg_id, cluster_type)));
+
+
 	/* Returns dsa_pointer for the new VSegmentDesc */
 	return ret;
 }
@@ -769,7 +773,12 @@ start_from_head:
 		INSTR_TIME_SUBTRACT(curr_time, victim->filled_time);
 
 		cuttime_us = INSTR_TIME_GET_MICROSEC(curr_time);
-		VStatisticUpdateCuttime(cuttime_us);
+
+		if (cluster_type == VCLUSTER_HOT)
+			VStatisticUpdateCuttime(cuttime_us);
+
+		ereport(LOG, (errmsg("@@ CutVSegDesc, seg: %d, type: %d, xmin: %d, xmax: %d",
+				victim->seg_id, cluster_type, victim->xmin, victim->xmax)));
 #endif
 
 		/* We can cut this segment. */

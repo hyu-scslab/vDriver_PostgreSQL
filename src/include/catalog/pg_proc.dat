@@ -1714,6 +1714,11 @@
   proname => 'llt_get_stat', proisstrict => 'f', provolatile => 'v',
   proparallel => 'r', prorettype => 'text', proargtypes => '',
   prosrc => 'llt_get_stat' },
+{ oid => '816', descr => 'print llt cuttime bucket',
+  proname => 'llt_get_cuttime', proisstrict => 'f', provolatile => 'v',
+  proparallel => 'r', prorettype => 'text', proargtypes => '',
+  prosrc => 'llt_get_cuttime' },
+
 
 { oid => '3399',
   proname => 'int8_mul_cash', prorettype => 'money',

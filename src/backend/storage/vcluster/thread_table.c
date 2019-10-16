@@ -104,6 +104,26 @@ SetSnapshot(TransactionId*	snapshot,
 }
 
 /*
+ * SetSnapshotOwner
+ *
+ * Set snapshot owner's transaction id for the snapshot in snapshot table
+ * NOTE: we call this function without acquiring ProcArrayLock
+ */
+void
+SetSnapshotOwner(TransactionId owner)
+{
+	int					index;
+	SnapshotTable		snapshot_table;
+	SnapshotTableNode*	node;
+
+	index = MyProc->pgprocno;
+	snapshot_table = thread_table_desc->snapshot_table;
+	node = &snapshot_table[index];
+
+	node->owner = owner;
+}
+
+/*
  * ClearSnapshot
  *
  * Clear snapshot.
@@ -174,6 +194,7 @@ CopySnapshotTable(SnapshotTable table)
 		}
 		table[i].cnt = snapshot_table[i].cnt;
 		table[i].xmax = snapshot_table[i].xmax;
+		table[i].owner = snapshot_table[i].owner;
 	}
 
 

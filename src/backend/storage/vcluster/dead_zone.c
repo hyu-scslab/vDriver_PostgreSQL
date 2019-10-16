@@ -50,7 +50,8 @@ DeadZoneDesc*	dead_zone_desc;
 static void DeadZoneUpdaterProcessMain(void);
 static TransactionId MinInSnapshot(
 		SnapshotTableNode*	snapshot,
-		TransactionId		after);
+		TransactionId		after,
+		TransactionId		prev_snapshot_owner);
 static void CalculateDeadZone(
 		DeadZoneDesc*	desc,
 		SnapshotTable	table);
@@ -126,7 +127,8 @@ StartDeadZoneUpdater(void)
  */
 static TransactionId
 MinInSnapshot(SnapshotTableNode*	snapshot,
-			  TransactionId			after)
+			  TransactionId			after,
+			  TransactionId			prev_snapshot_owner)
 {
 	TransactionId	min_xid;
 	TransactionId	xid;
@@ -139,6 +141,9 @@ MinInSnapshot(SnapshotTableNode*	snapshot,
 	for (int i = 0; i < snapshot->cnt; i++) {
 		xid = snapshot->snapshot[i];
 		if (xid > after && xid < min_xid) {
+			/* if the xid is the owner of the previous snapshot, skip it */
+			if (xid == prev_snapshot_owner) continue;
+
 			min_xid = xid;
 		}
 	}
@@ -195,7 +200,7 @@ CalculateDeadZone(DeadZoneDesc*	desc,
 	}
 
 	desc->dead_zones[0].left = 0;
-	desc->dead_zones[0].right = MinInSnapshot(&table[0], 0);
+	desc->dead_zones[0].right = MinInSnapshot(&table[0], 0, 0);
 	desc->cnt = 1;
 
 	/* Calculate other zones. */
@@ -207,7 +212,7 @@ CalculateDeadZone(DeadZoneDesc*	desc,
 		}
 
 		left = prev_snapshot->xmax;
-		right = MinInSnapshot(next_snapshot, left);
+		right = MinInSnapshot(next_snapshot, left, prev_snapshot->owner);
 
 		desc->dead_zones[i].left = left;
 		desc->dead_zones[i].right = right;
@@ -236,30 +241,30 @@ SetDeadZone(void)
 		(DeadZoneDesc*) malloc(sizeof(DeadZoneDesc));
 	CalculateDeadZone(local_dead_zone_desc, table);
 #ifdef HYU_LLT_STAT
-//	elog(WARNING, "HYU_LLT : dead zone\n"
-//			"HYU_LLT\n"
-//			"HYU_LLT\n"
-//			"HYU_LLT         %10u %10u (%10u)\n"
-//			"HYU_LLT         %10u %10u (%10u)\n"
-//			"HYU_LLT         %10u %10u (%10u)\n"
-//			"HYU_LLT         %10u %10u (%10u)\n"
-//			"HYU_LLT         %10u %10u (%10u)\n"
-//			"HYU_LLT         %10u %10u (%10u)\n"
-//			"HYU_LLT\n"
-//			"HYU_LLT\n",
-//			local_dead_zone_desc->dead_zones[0].left, local_dead_zone_desc->dead_zones[0].right,
-//			local_dead_zone_desc->dead_zones[0].right - local_dead_zone_desc->dead_zones[0].left,
-//			local_dead_zone_desc->dead_zones[1].left, local_dead_zone_desc->dead_zones[1].right,
-//			local_dead_zone_desc->dead_zones[1].right - local_dead_zone_desc->dead_zones[1].left,
-//			local_dead_zone_desc->dead_zones[2].left, local_dead_zone_desc->dead_zones[2].right,
-//			local_dead_zone_desc->dead_zones[2].right - local_dead_zone_desc->dead_zones[2].left,
-//			local_dead_zone_desc->dead_zones[3].left, local_dead_zone_desc->dead_zones[3].right,
-//			local_dead_zone_desc->dead_zones[3].right - local_dead_zone_desc->dead_zones[3].left,
-//			local_dead_zone_desc->dead_zones[4].left, local_dead_zone_desc->dead_zones[4].right,
-//			local_dead_zone_desc->dead_zones[4].right - local_dead_zone_desc->dead_zones[4].left,
-//			local_dead_zone_desc->dead_zones[5].left, local_dead_zone_desc->dead_zones[5].right,
-//			local_dead_zone_desc->dead_zones[5].right - local_dead_zone_desc->dead_zones[5].left
-//			);
+	elog(WARNING, "HYU_LLT : dead zone\n"
+			"HYU_LLT\n"
+			"HYU_LLT\n"
+			"HYU_LLT         %10u %10u (%10u)\n"
+			"HYU_LLT         %10u %10u (%10u)\n"
+			"HYU_LLT         %10u %10u (%10u)\n"
+			"HYU_LLT         %10u %10u (%10u)\n"
+			"HYU_LLT         %10u %10u (%10u)\n"
+			"HYU_LLT         %10u %10u (%10u)\n"
+			"HYU_LLT\n"
+			"HYU_LLT\n",
+			local_dead_zone_desc->dead_zones[0].left, local_dead_zone_desc->dead_zones[0].right,
+			local_dead_zone_desc->dead_zones[0].right - local_dead_zone_desc->dead_zones[0].left,
+			local_dead_zone_desc->dead_zones[1].left, local_dead_zone_desc->dead_zones[1].right,
+			local_dead_zone_desc->dead_zones[1].right - local_dead_zone_desc->dead_zones[1].left,
+			local_dead_zone_desc->dead_zones[2].left, local_dead_zone_desc->dead_zones[2].right,
+			local_dead_zone_desc->dead_zones[2].right - local_dead_zone_desc->dead_zones[2].left,
+			local_dead_zone_desc->dead_zones[3].left, local_dead_zone_desc->dead_zones[3].right,
+			local_dead_zone_desc->dead_zones[3].right - local_dead_zone_desc->dead_zones[3].left,
+			local_dead_zone_desc->dead_zones[4].left, local_dead_zone_desc->dead_zones[4].right,
+			local_dead_zone_desc->dead_zones[4].right - local_dead_zone_desc->dead_zones[4].left,
+			local_dead_zone_desc->dead_zones[5].left, local_dead_zone_desc->dead_zones[5].right,
+			local_dead_zone_desc->dead_zones[5].right - local_dead_zone_desc->dead_zones[5].left
+			);
 #endif
 
 	/* Notice new dead zone. */
