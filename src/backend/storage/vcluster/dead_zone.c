@@ -174,8 +174,10 @@ CalculateDeadZone(DeadZoneDesc*	desc,
 		max_index = i;
 		max_xmax = PG_UINT32_MAX;
 		for (int j = i; j < THREAD_TABLE_SIZE; j++) {
-			if (table[j].cnt != 0 /* except empty node */
-					&& table[j].xmax < max_xmax) {
+			if (table[j].cnt == 0 && !TransactionIdIsValid(table[j].xmax))
+				/* except empty node */
+				continue;
+			if (table[j].xmax < max_xmax) {
 				max_xmax = table[j].xmax;
 				max_index = j;
 			}
@@ -193,7 +195,7 @@ CalculateDeadZone(DeadZoneDesc*	desc,
 	}
 
 	/* Calculate first zone. */
-	if (table[0].cnt == 0) {
+	if (table[0].cnt == 0 && !TransactionIdIsValid(table[0].xmax)) {
 		/* No snapshot */
 		desc->cnt = 0;
 		return;
@@ -240,7 +242,7 @@ SetDeadZone(void)
 	local_dead_zone_desc = 
 		(DeadZoneDesc*) malloc(sizeof(DeadZoneDesc));
 	CalculateDeadZone(local_dead_zone_desc, table);
-#ifdef HYU_LLT_STAT
+#if 0 // #ifdef HYU_LLT_STAT
 	elog(WARNING, "HYU_LLT : dead zone\n"
 			"HYU_LLT\n"
 			"HYU_LLT\n"

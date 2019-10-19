@@ -287,15 +287,12 @@ llt_get_cuttime(PG_FUNCTION_ARGS)
 	tmp[0] = '\0';
 	for (int i = 0; i < NUM_CUTTIME_BUCKET; i++)
 	{
-		if (vstatistic_desc->bucket_cuttime[i] > 0)
-		{
-			sprintf(tmp, "%8lu %8lu %8lu\n",
-				CUTTIME_BUCKET_UNIT * i,
+		sprintf(tmp, "%8lu %8lu %8lu\n",
 				CUTTIME_BUCKET_UNIT * (i + 1),
-				vstatistic_desc->bucket_cuttime[i]);
+				vstatistic_desc->bucket_cuttime[VCLUSTER_HOT][i],
+				vstatistic_desc->bucket_cuttime[VCLUSTER_LLT][i]);
 
-			strcat(string, tmp);
-		}
+		strcat(string, tmp);
 	}
 
     PG_RETURN_TEXT_P(cstring_to_text(string));

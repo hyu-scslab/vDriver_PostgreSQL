@@ -97,7 +97,7 @@ VStatisticInit(void)
     }
 	
 	memset(vstatistic_desc->bucket_cuttime,
-			0, sizeof(uint32) * NUM_CUTTIME_BUCKET);
+			0, sizeof(uint32) * NUM_CUTTIME_BUCKET * VCLUSTER_NUM);
 }
 
 /*
@@ -132,7 +132,7 @@ StartMonitor(void)
  * Insert a new cuttime into the corresponding cuttime bucket
  */
 void
-VStatisticUpdateCuttime(uint64 cuttime_us)
+VStatisticUpdateCuttime(VCLUSTER_TYPE cluster_type, uint64 cuttime_us)
 {
 	int bucket_idx;
 
@@ -144,7 +144,7 @@ VStatisticUpdateCuttime(uint64 cuttime_us)
 	 * Only the cutter process calls this function so that
 	 * we don't need any consensus here.
 	 */
-	vstatistic_desc->bucket_cuttime[bucket_idx]++;
+	vstatistic_desc->bucket_cuttime[cluster_type][bucket_idx]++;
 }
 
 /*
@@ -219,18 +219,7 @@ PrintStatistics(void)
 				cnt_seg_physical_deleted * VCLUSTER_SEG_NUM_ENTRY,
 				delta_deleted_inserted
 			);
-#if 1
-		for (int i = 0; i < NUM_CUTTIME_BUCKET; i++)
-		{
-			if (vstatistic_desc->bucket_cuttime[i] > 0)
-			{
-				elog(WARNING, "HYU_LLT		cuttime(%8ld - %8ldus): %8ld\n",
-						i * CUTTIME_BUCKET_UNIT,
-						(i + 1) * CUTTIME_BUCKET_UNIT,
-						vstatistic_desc->bucket_cuttime[i]);
-			}
-		}
-#endif
+
 		sleep(1);
 	}
 }
