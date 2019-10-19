@@ -44,6 +44,9 @@
 #include "storage/vstatistic.h"
 #include "storage/vcache.h"
 #endif
+#ifdef HYU_COMMON_STAT
+#include "storage/cstatistic.h"
+#endif
 
 
 /*
@@ -305,6 +308,28 @@ llt_get_cuttime(PG_FUNCTION_ARGS)
     PG_RETURN_NULL();
 }
 
+Datum
+get_stat(PG_FUNCTION_ARGS)
+{
+#ifdef HYU_COMMON_STAT
+    char string[4000];
+	FullTransactionId full_xid;
+	TransactionId xid;
+
+	full_xid = ShmemVariableCache->nextFullXid;
+	xid = XidFromFullTransactionId(full_xid);
+
+    sprintf(string,
+            "_recent xid_                 : %8u\n"
+            "_version chain counter_      : %8lu\n",
+            xid,
+            cnt_version_chain
+           );
+    PG_RETURN_TEXT_P(cstring_to_text(string));
+#endif
+
+    PG_RETURN_NULL();
+}
 
 /* HYU_LLT end */
 
