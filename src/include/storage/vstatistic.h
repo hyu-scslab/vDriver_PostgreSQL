@@ -18,8 +18,8 @@
 #include "utils/snapmgr.h"
 #include "utils/timestamp.h"
 
-#define NUM_CUTTIME_BUCKET		400
-#define CUTTIME_BUCKET_UNIT		100000	/* x microsec */
+#define NUM_CUTTIME_BUCKET		60
+#define CUTTIME_BUCKET_UNIT		500000	/* x microsec */
 
 
 /* vDriver statistics descriptor */
