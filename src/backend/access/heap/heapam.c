@@ -70,6 +70,9 @@
 #include "storage/vcluster.h"
 #include "storage/vcache.h"
 #endif
+#ifdef HYU_COMMON_STAT
+#include "storage/cstatistic.h"
+#endif
 #include "utils/datum.h"
 #include "utils/inval.h"
 #include "utils/lsyscache.h"
@@ -1949,6 +1952,9 @@ heap_hot_search_buffer(ItemPointer tid, Relation relation, Buffer buffer,
 	{
 		ItemId		lp;
 
+#ifdef HYU_COMMON_STAT
+        __sync_fetch_and_add(&cstatistic_desc->cnt_chain, 1);
+#endif
 		/* check for bogus TID */
 		if (offnum < FirstOffsetNumber || offnum > PageGetMaxOffsetNumber(dp))
 			break;

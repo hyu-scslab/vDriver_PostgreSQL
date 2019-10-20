@@ -27,6 +27,9 @@
 #include "storage/dead_zone.h"
 #include "storage/vstatistic.h"
 #endif /* HYU_LLT_STAT */
+#ifdef HYU_COMMON_STAT
+#include "storage/cstatistic.h"
+#endif
 
 #include "storage/vchain.h"
 #include "storage/vchain_hash.h"
@@ -124,6 +127,9 @@ VChainLookupLocator(Oid rel_node,
 	locator = (VLocator *)dsa_get_address(dsa_vcluster, chain->dsap_prev);
 	while (locator->dsap != chain->dsap)
 	{
+#ifdef HYU_COMMON_STAT
+        __sync_fetch_and_add(&cstatistic_desc->cnt_chain, 1);
+#endif
 		if (!XidInMVCCSnapshot(locator->xmin, snapshot))
 		{
 			/* Found the visible version */
