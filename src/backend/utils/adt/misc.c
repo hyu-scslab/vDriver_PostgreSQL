@@ -46,6 +46,9 @@
 #endif
 #ifdef HYU_COMMON_STAT
 #include "storage/cstatistic.h"
+#include <time.h>
+#include <stdint.h>
+#include <inttypes.h>
 #endif
 
 
@@ -312,15 +315,29 @@ get_stat(PG_FUNCTION_ARGS)
     char string[4000];
 	FullTransactionId full_xid;
 	TransactionId xid;
+    struct timespec tms;
+    int64_t micros;
+
+    /* The C11 way */
+    timespec_get(&tms, TIME_UTC);
+
+    /* POSIX.1-2008 way */
+    //if (clock_gettime(CLOCK_REALTIME,&tms)) {
+    /* seconds, multiplied with 1 million */
+    micros = tms.tv_sec * 1000000;
+    /* Add full microseconds */
+    micros += tms.tv_nsec/1000;
 
 	full_xid = ShmemVariableCache->nextFullXid;
 	xid = XidFromFullTransactionId(full_xid);
 
     sprintf(string,
             "_recent xid_                 : %8u\n"
-            "_version chain counter_      : %8lu\n",
+            "_version chain counter_      : %8lu\n"
+            "_time_                       : %lu.%lu\n",
             xid,
-            cnt_version_chain
+            cnt_version_chain,
+            micros/1000000, micros%1000000
            );
     PG_RETURN_TEXT_P(cstring_to_text(string));
 #endif
