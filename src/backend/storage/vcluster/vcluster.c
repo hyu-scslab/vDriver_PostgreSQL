@@ -46,7 +46,9 @@
 
 #define AVG_STAT_WEIGHT					(0.9999)
 #define CLASSIFICATION_THRESHOLD_COLD	(10)
-#define CLASSIFICATION_THRESHOLD_LLT	(200)//(40000) //(200)
+#ifndef CLASSIFICATION_THRESHOLD_LLT	/* For configuration */
+#define CLASSIFICATION_THRESHOLD_LLT	(200) //(40000)
+#endif
 
 /* vcluster descriptor in shared memory*/
 VClusterDesc	*vclusters;
@@ -774,8 +776,7 @@ start_from_head:
 
 		cuttime_us = INSTR_TIME_GET_MICROSEC(curr_time);
 
-		if (cluster_type == VCLUSTER_HOT)
-			VStatisticUpdateCuttime(cuttime_us);
+		VStatisticUpdateCuttime(cluster_type, cuttime_us);
 
 		ereport(LOG, (errmsg("@@ CutVSegDesc, seg: %d, type: %d, xmin: %d, xmax: %d",
 				victim->seg_id, cluster_type, victim->xmin, victim->xmax)));

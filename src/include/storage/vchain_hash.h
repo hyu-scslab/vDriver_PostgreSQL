@@ -16,8 +16,8 @@
 
 typedef struct VChainTag
 {
-	Oid				rel_node;
 	PrimaryKey		primary_key;
+	Oid				rel_node;
 } VChainTag;
 
 /* in globals.c ... this duplicates miscadmin.h */

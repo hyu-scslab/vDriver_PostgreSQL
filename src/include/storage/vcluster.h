@@ -32,7 +32,9 @@ typedef uint32_t VCLUSTER_TYPE;
 #define VCLUSTER_SEGSIZE    (16*1024*1024)
 
 /* Version tuple size */
-#define VCLUSTER_TUPLE_SIZE	(256)	/* TODO: move this to configuration */
+#ifndef VCLUSTER_TUPLE_SIZE /* configurable outside */
+#define VCLUSTER_TUPLE_SIZE	(256)
+#endif
 
 #define VCLUSTER_TUPLE_LEN	(VCLUSTER_TUPLE_SIZE - 12)
 /* Layout of one record on VSegment. Size must be VCLUSTER_TUPLE_SIZE. */

@@ -59,8 +59,13 @@ VChainHashInit(int size)
 {
 	HASHCTL		info;
 
-	/* Primary key maps to version chain */
-	info.keysize = sizeof(VChainTag);
+	/*
+	 * Primary key maps to version chain
+	 *
+	 * Important: sizeof(VChainTag) is 16, but actual size we are using is 12.
+	 * (PrimaryKey + Oid). So we need to put the keysize with actual size.
+	 */
+	info.keysize = sizeof(Oid) + sizeof(PrimaryKey);
 	info.entrysize = sizeof(VChainLookupEnt);
 	info.num_partitions = NUM_VCHAIN_PARTITIONS;
 

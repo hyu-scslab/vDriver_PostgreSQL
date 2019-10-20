@@ -143,6 +143,7 @@ ClearSnapshot(void)
 	/* Clear snapshot. */
 	/* Maybe it is sufficient to update only cnt. */
 	node->cnt = 0;
+	node->xmax = InvalidTransactionId;
 }
 
 /*
