@@ -128,7 +128,7 @@ VChainLookupLocator(Oid rel_node,
 	while (locator->dsap != chain->dsap)
 	{
 #ifdef HYU_COMMON_STAT
-        __sync_fetch_and_add(&cstatistic_desc->cnt_chain, 1);
+        __sync_fetch_and_add(&cnt_version_chain, 1);
 #endif
 		if (!XidInMVCCSnapshot(locator->xmin, snapshot))
 		{
