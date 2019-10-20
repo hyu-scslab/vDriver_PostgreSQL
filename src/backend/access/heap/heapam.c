@@ -1796,6 +1796,8 @@ heap_hot_search_buffer_with_vc(ItemPointer tid, Relation relation,
 
 			*ret_cache_id = cache_id;
 		}
+		
+		*all_dead = false;
 
 		return true;
 	}
