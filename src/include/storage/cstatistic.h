@@ -30,7 +30,8 @@ typedef struct {
 
 extern CStatisticDesc*	cstatistic_desc;
 
-extern uint64_t cnt_version_chain;
+extern uint64_t cnt_version_chain_vanilla;
+extern uint64_t cnt_version_chain_vdriver;
 
 extern Size CStatisticShmemSize(void);
 extern void CStatisticInit(void);

@@ -4110,7 +4110,7 @@ PostgresMain(int argc, char *argv[],
 	 * Non-error queries loop here.
 	 */
 #ifdef HYU_COMMON_STAT
-    cnt_version_chain = 0;
+    cnt_version_chain_vanilla = 0;
 #endif
 
 	for (;;)

@@ -120,7 +120,7 @@ VChainLookupLocator(Oid rel_node,
 	}
 
 #ifdef HYU_COMMON_STAT
-    cnt_version_chain = 0;
+    cnt_version_chain_vdriver = 0;
 #endif
 	/*
 	 * Now we have the hash entry (dummy node) that indicates the
@@ -131,7 +131,7 @@ VChainLookupLocator(Oid rel_node,
 	while (locator->dsap != chain->dsap)
 	{
 #ifdef HYU_COMMON_STAT
-        __sync_fetch_and_add(&cnt_version_chain, 1);
+        __sync_fetch_and_add(&cnt_version_chain_vdriver, 1);
 #endif
 		if (!XidInMVCCSnapshot(locator->xmin, snapshot))
 		{

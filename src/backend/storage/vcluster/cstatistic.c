@@ -40,7 +40,8 @@
 CStatisticDesc*	cstatistic_desc;
 
 
-uint64_t cnt_version_chain;
+uint64_t cnt_version_chain_vanilla;
+uint64_t cnt_version_chain_vdriver;
 
 
 

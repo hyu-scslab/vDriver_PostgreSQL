@@ -334,12 +334,15 @@ get_stat(PG_FUNCTION_ARGS)
     sprintf(string,
             "_time_                       : %lu.%lu\n"
             "_recent xid_                 : %8u\n"
-            "_version chain counter_      : %8lu\n",
+            "_vanilla version chain counter_      : %8lu\n"
+            "_vdriver version chain counter_      : %8lu\n",
             micros/1000000, micros%1000000,
             xid,
-            cnt_version_chain
+            cnt_version_chain_vanilla,
+            cnt_version_chain_vdriver
            );
-    cnt_version_chain = 0;
+    cnt_version_chain_vanilla = 0;
+    cnt_version_chain_vdriver = 0;
     PG_RETURN_TEXT_P(cstring_to_text(string));
 #endif
 

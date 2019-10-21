@@ -2268,9 +2268,6 @@ bool
 XidInMVCCSnapshot(TransactionId xid, Snapshot snapshot)
 {
 	uint32		i;
-#ifdef HYU_COMMON_STAT
-    //__sync_fetch_and_add(&cnt_version_chain, 1);
-#endif
 
 	/*
 	 * Make a quick range check to eliminate most XIDs without looking at the
