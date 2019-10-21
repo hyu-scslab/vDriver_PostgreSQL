@@ -184,20 +184,6 @@ CalculateDeadZone(DeadZoneDesc*	desc,
 			else if (table[j].xmax == min_xmax &&
 					table[j].cnt > table[min_index].cnt)
 			{
-				min_xmax = table[j].xmax;
-				min_index = j;
-			}
-		}
-
-		if (i != min_index) {
-			if (table[i].xmax > min_xmax)
-			{
-				temp = table[i];
-				table[i] = table[min_index];
-				table[min_index] = temp;
-			}
-			else if (table[i].xmax == min_xmax)
-			{
 				/*
 				 * xmax of two snapshot is same, but we need to determine the
 				 * order between them. Transaction id larger than xmax might
@@ -205,13 +191,15 @@ CalculateDeadZone(DeadZoneDesc*	desc,
 				 * smaller then it is late snapshot than another because
 				 * someone could be committed out between them.
 				 */
-				if (table[i].cnt < table[min_index].cnt)
-				{
-					temp = table[i];
-					table[i] = table[min_index];
-					table[min_index] = temp;
-				}
+				min_xmax = table[j].xmax;
+				min_index = j;
 			}
+		}
+
+		if (i != min_index) {
+			temp = table[i];
+			table[i] = table[min_index];
+			table[min_index] = temp;
 		}
 		if (min_xmax == PG_UINT32_MAX) {
 			/* Nothing to sort anymore. */
