@@ -260,9 +260,6 @@ VCacheReadTupleRef(VSegmentId seg_id,
 	int			cache_id;			/* vcache index of target segment page */
 	int			page_offset;
 
-	elog(WARNING, "@@ VCacheReadTupleRef, seg_id: %d, seg_offset: %d",
-		seg_id, seg_offset);
-
 	cache_id = VCacheGetCacheRef(seg_id, seg_offset, false);
 
 	page_offset = seg_offset % SEG_PAGESZ;

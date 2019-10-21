@@ -161,8 +161,8 @@ CalculateDeadZone(DeadZoneDesc*	desc,
 				  SnapshotTable	table)
 {
 	SnapshotTableNode	temp; /* for swap */
-	TransactionId		max_xmax;
-	int					max_index;
+	TransactionId		min_xmax;
+	int					min_index;
 	SnapshotTableNode*	prev_snapshot;
 	SnapshotTableNode*	next_snapshot;
 	TransactionId		left;
@@ -171,24 +171,49 @@ CalculateDeadZone(DeadZoneDesc*	desc,
 	/* Sort snapshot table by xmax. */
 	/* selection sort */
 	for (int i = 0; i < THREAD_TABLE_SIZE; i++) {
-		max_index = i;
-		max_xmax = PG_UINT32_MAX;
+		min_index = i;
+		min_xmax = PG_UINT32_MAX;
 		for (int j = i; j < THREAD_TABLE_SIZE; j++) {
 			if (table[j].cnt == 0 && !TransactionIdIsValid(table[j].xmax))
 				/* except empty node */
 				continue;
-			if (table[j].xmax < max_xmax) {
-				max_xmax = table[j].xmax;
-				max_index = j;
+			if (table[j].xmax < min_xmax) {
+				min_xmax = table[j].xmax;
+				min_index = j;
+			}
+			else if (table[j].xmax == min_xmax &&
+					table[j].cnt > table[min_index].cnt)
+			{
+				min_xmax = table[j].xmax;
+				min_index = j;
 			}
 		}
 
-		if (i != max_index) {
-			temp = table[i];
-			table[i] = table[max_index];
-			table[max_index] = temp;
+		if (i != min_index) {
+			if (table[i].xmax > min_xmax)
+			{
+				temp = table[i];
+				table[i] = table[min_index];
+				table[min_index] = temp;
+			}
+			else if (table[i].xmax == min_xmax)
+			{
+				/*
+				 * xmax of two snapshot is same, but we need to determine the
+				 * order between them. Transaction id larger than xmax might
+				 * be already ignored, so if the xcnt of the transaction is
+				 * smaller then it is late snapshot than another because
+				 * someone could be committed out between them.
+				 */
+				if (table[i].cnt < table[min_index].cnt)
+				{
+					temp = table[i];
+					table[i] = table[min_index];
+					table[min_index] = temp;
+				}
+			}
 		}
-		if (max_xmax == PG_UINT32_MAX) {
+		if (min_xmax == PG_UINT32_MAX) {
 			/* Nothing to sort anymore. */
 			break;
 		}
