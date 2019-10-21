@@ -1695,9 +1695,6 @@ HeapTupleSatisfiesVisibility(HeapTuple tup, Snapshot snapshot, Buffer buffer)
 	switch (snapshot->snapshot_type)
 	{
 		case SNAPSHOT_MVCC:
-#ifdef HYU_COMMON_STAT
-        __sync_fetch_and_add(&cnt_version_chain, 1);
-#endif
 			return HeapTupleSatisfiesMVCC(tup, snapshot, buffer);
 			break;
 		case SNAPSHOT_SELF:

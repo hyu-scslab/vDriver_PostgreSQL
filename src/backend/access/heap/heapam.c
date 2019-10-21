@@ -1955,7 +1955,7 @@ heap_hot_search_buffer(ItemPointer tid, Relation relation, Buffer buffer,
 		ItemId		lp;
 
 #ifdef HYU_COMMON_STAT
-        //__sync_fetch_and_add(&cnt_version_chain, 1);
+        __sync_fetch_and_add(&cnt_version_chain, 1);
 #endif
 		/* check for bogus TID */
 		if (offnum < FirstOffsetNumber || offnum > PageGetMaxOffsetNumber(dp))

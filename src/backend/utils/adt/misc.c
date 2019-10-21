@@ -332,13 +332,14 @@ get_stat(PG_FUNCTION_ARGS)
 	xid = XidFromFullTransactionId(full_xid);
 
     sprintf(string,
+            "_time_                       : %lu.%lu\n"
             "_recent xid_                 : %8u\n"
-            "_version chain counter_      : %8lu\n"
-            "_time_                       : %lu.%lu\n",
+            "_version chain counter_      : %8lu\n",
+            micros/1000000, micros%1000000,
             xid,
-            cnt_version_chain,
-            micros/1000000, micros%1000000
+            cnt_version_chain
            );
+    cnt_version_chain = 0;
     PG_RETURN_TEXT_P(cstring_to_text(string));
 #endif
 

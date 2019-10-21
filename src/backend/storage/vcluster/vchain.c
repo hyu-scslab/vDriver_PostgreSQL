@@ -119,6 +119,9 @@ VChainLookupLocator(Oid rel_node,
 		return false;
 	}
 
+#ifdef HYU_COMMON_STAT
+    cnt_version_chain = 0;
+#endif
 	/*
 	 * Now we have the hash entry (dummy node) that indicates the
 	 * head/tail of the version chain.
