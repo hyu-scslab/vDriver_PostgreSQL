@@ -603,8 +603,13 @@ VersionClassification(TransactionId xmin,
 		return VCLUSTER_COLD;
 
 	/* LLT Classification */
-	llt_boundary = nextFullId.value -
-			(vclusters->average_txn_len * CLASSIFICATION_THRESHOLD_LLT);
+	if (vclusters->average_txn_len * CLASSIFICATION_THRESHOLD_LLT >
+				nextFullId.value)
+		llt_boundary = 0;
+	else
+		llt_boundary = nextFullId.value -
+				(vclusters->average_txn_len * CLASSIFICATION_THRESHOLD_LLT);
+
 	recent_oldest_xid = 0;
 
 	for (int i = 0; i < snapshot->xcnt; i++)
