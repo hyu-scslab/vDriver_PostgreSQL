@@ -29,7 +29,8 @@ enum {
 typedef uint32_t VCLUSTER_TYPE;
 
 /* Size of a segment of a version cluster */
-#define VCLUSTER_SEGSIZE    (16*1024*1024)
+//#define VCLUSTER_SEGSIZE    (16*1024*1024)
+#define VCLUSTER_SEGSIZE    (64*1024)
 
 /* Version tuple size */
 #ifndef VCLUSTER_TUPLE_SIZE /* configurable outside */
@@ -50,7 +51,8 @@ typedef struct {
 #define VCLUSTER_SEG_NUM_ENTRY	((VCLUSTER_SEGSIZE) / (VCLUSTER_TUPLE_SIZE))
 
 /* Max number of segments we can manage. */
-#define VCLUSTER_MAX_SEGMENTS		10000
+//#define VCLUSTER_MAX_SEGMENTS		10000
+#define VCLUSTER_MAX_SEGMENTS		100000
 
 typedef uint32_t VSegmentId;
 typedef uint32_t VSegmentOffset;

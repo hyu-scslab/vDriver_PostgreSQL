@@ -881,7 +881,7 @@ VClusterCutProcessMain(void)
 		for (VCLUSTER_TYPE type = 0; type < VCLUSTER_NUM; type++) {
 			CutVSegDesc(type);
 		}
-		sleep(0.01);
+		sleep(0.0001);
 	}
 }
 

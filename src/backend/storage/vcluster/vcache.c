@@ -47,7 +47,12 @@ VCacheMeta		 	*VCache;
  * in a segment.
  */
 #define NUM_PAGES_IN_SEG	((VCLUSTER_SEGSIZE) / (SEG_PAGESZ))
-#define PAGE_RESERVE		((NUM_PAGES_IN_SEG) / 32)
+#if NUM_PAGES_IN_SEG < 128
+#define PAGE_RESERVE		((NUM_PAGES_IN_SEG))
+#else
+#define PAGE_RESERVE		((NUM_PAGES_IN_SEG) / 32 )
+#endif
+
 
 /* decls for local routines only used within this module */
 static int VCacheGetCacheRef(VSegmentId seg_id,
