@@ -47,7 +47,12 @@ VCacheMeta		 	*VCache;
  * in a segment.
  */
 #define NUM_PAGES_IN_SEG	((VCLUSTER_SEGSIZE) / (SEG_PAGESZ))
+
+#if NUM_PAGES_IN_SEG < 128
+#define PAGE_RESERVE		((NUM_PAGES_IN_SEG))
+#else
 #define PAGE_RESERVE		((NUM_PAGES_IN_SEG) / 32)
+#endif
 
 /* decls for local routines only used within this module */
 static int VCacheGetCacheRef(VSegmentId seg_id,
@@ -326,7 +331,6 @@ VCacheUnref(int cache_id)
 		elog(ERROR, "cache_id is not valid");
 		return;
 	}
-	elog(WARNING, "VCacheUnrefInternal, cache_id: %d", cache_id);
 	cache = GetVCacheDescriptor(cache_id);
 	VCacheUnrefInternal(cache);
 }

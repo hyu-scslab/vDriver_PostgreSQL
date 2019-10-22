@@ -80,9 +80,13 @@ VClusterShmemSize(void)
 	Size		size = 0;
 
 	size = add_size(size, sizeof(VClusterDesc));
+
 	size = add_size(size, VCacheShmemSize());
+
 	size = add_size(size, VChainShmemSize());
+
 	size = add_size(size, ThreadTableShmemSize());
+
 	size = add_size(size, DeadZoneShmemSize());
 #ifdef HYU_LLT_STAT
 	size = add_size(size, VStatisticShmemSize());
@@ -597,11 +601,6 @@ VersionClassification(TransactionId xmin,
 	uint64_t		llt_boundary;
 	TransactionId	recent_oldest_xid;
 
-	/* HOT/COLD Classification */
-	len = xmax - xmin;
-	if (len > vclusters->average_ver_len * CLASSIFICATION_THRESHOLD_COLD)
-		return VCLUSTER_COLD;
-
 	/* LLT Classification */
 	if (vclusters->average_txn_len * CLASSIFICATION_THRESHOLD_LLT >
 				nextFullId.value)
@@ -627,6 +626,11 @@ VersionClassification(TransactionId xmin,
 	if (xmin <= recent_oldest_xid)
 		return VCLUSTER_LLT;
 	
+	/* HOT/COLD Classification */
+	len = xmax - xmin;
+	if (len > vclusters->average_ver_len * CLASSIFICATION_THRESHOLD_COLD)
+		return VCLUSTER_COLD;
+	
 	return VCLUSTER_HOT;
 }
 
@@ -647,6 +651,8 @@ AllocNewSegmentInternal(dsa_area *dsa, VCLUSTER_TYPE cluster_type)
 	/* Allocate a new segment descriptor in shared memory */
 	ret = dsa_allocate_extended(
 			dsa, sizeof(VSegmentDesc), DSA_ALLOC_ZERO);
+	
+	ereport(LOG, (errmsg("$$ sizeof(VSegmentDesc): %d", sizeof(VSegmentDesc))));
 
 	/* Get a new segment id */
 	new_seg_id = vclusters->reserved_seg_id[cluster_type];

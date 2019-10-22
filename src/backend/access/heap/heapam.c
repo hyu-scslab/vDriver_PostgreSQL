@@ -1768,8 +1768,6 @@ heap_hot_search_buffer_with_vc(ItemPointer tid, Relation relation,
 	primary_key = heap_getattr(
 			heapTuple, attnum_pk, relation->rd_att, &is_null);
 	
-	elog(WARNING, "@@ Looking for pkey %d\n", (int) primary_key);
-
 	/* Find the old version from the vcluster */
 	cache_id = VClusterLookupTuple(relation->rd_node.relNode,
 								   primary_key,

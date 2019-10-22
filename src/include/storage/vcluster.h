@@ -29,7 +29,7 @@ enum {
 typedef uint32_t VCLUSTER_TYPE;
 
 /* Size of a segment of a version cluster */
-#define VCLUSTER_SEGSIZE    (16*1024*1024)
+#define VCLUSTER_SEGSIZE    (64*1024)
 
 /* Version tuple size */
 #ifndef VCLUSTER_TUPLE_SIZE /* configurable outside */

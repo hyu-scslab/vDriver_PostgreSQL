@@ -136,7 +136,7 @@ int			NVCache = VBUFFER_NUM_PAGE;
 #else
 int			NVCache = 10000;
 #endif
-int			NVChainExpected = 10000000;
+int			NVChainExpected = 100000;
 #endif
 int			MaxConnections = 90;
 int			max_worker_processes = 8;

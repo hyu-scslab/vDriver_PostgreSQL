@@ -120,7 +120,7 @@ VCacheHashInsert(const VCacheTag *tagPtr, uint32 hashcode, int cache_id)
 	bool				found;
 	
 	Assert(cache_id >= 0);		/* -1 is reserved for not-in-table */
-
+	
 	result = (VCacheLookupEnt *)
 			hash_search_with_hash_value(SharedVCacheHash,
 										(void *) tagPtr,
@@ -146,7 +146,7 @@ void
 VCacheHashDelete(const VCacheTag *tagPtr, uint32 hashcode)
 {
 	VCacheLookupEnt *result;
-
+	
 	result = (VCacheLookupEnt *)
 			hash_search_with_hash_value(SharedVCacheHash,
 										(void *) tagPtr,
