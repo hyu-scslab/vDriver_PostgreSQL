@@ -113,7 +113,7 @@ extern PGDLLIMPORT int NamedLWLockTrancheRequests;
 #define NUM_BUFFER_PARTITIONS  128
 
 #ifdef HYU_LLT
-#define NUM_VCACHE_PARTITIONS  1280
+#define NUM_VCACHE_PARTITIONS  128
 #define NUM_VCHAIN_PARTITIONS  8192
 #endif
 
