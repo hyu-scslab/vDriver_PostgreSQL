@@ -67,6 +67,9 @@
 #include "utils/resowner_private.h"
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
+#ifdef HYU_COMMON_STAT
+#include "storage/cstatistic.h"
+#endif
 
 
 /*

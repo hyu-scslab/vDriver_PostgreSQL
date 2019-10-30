@@ -78,6 +78,9 @@
 #include "utils/timeout.h"
 #include "utils/timestamp.h"
 #include "mb/pg_wchar.h"
+#ifdef HYU_COMMON_STAT
+#include "storage/cstatistic.h"
+#endif
 
 
 /* ----------------
@@ -4106,6 +4109,9 @@ PostgresMain(int argc, char *argv[],
 	/*
 	 * Non-error queries loop here.
 	 */
+#ifdef HYU_COMMON_STAT
+    cnt_version_chain_vanilla = 0;
+#endif
 
 	for (;;)
 	{

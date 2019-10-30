@@ -1710,7 +1710,11 @@
   proparallel => 'r', prorettype => 'text', proargtypes => '',
   prosrc => 'current_query' },
 # HYU_LLT
-{ oid => '815', descr => 'my custom function',
+{ oid => '814', descr => 'print common stat',
+  proname => 'get_stat', proisstrict => 'f', provolatile => 'v',
+  proparallel => 'r', prorettype => 'text', proargtypes => '',
+  prosrc => 'get_stat' },
+{ oid => '815', descr => 'print vDriver stat',
   proname => 'llt_get_stat', proisstrict => 'f', provolatile => 'v',
   proparallel => 'r', prorettype => 'text', proargtypes => '',
   prosrc => 'llt_get_stat' },

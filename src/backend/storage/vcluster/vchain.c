@@ -27,6 +27,9 @@
 #include "storage/dead_zone.h"
 #include "storage/vstatistic.h"
 #endif /* HYU_LLT_STAT */
+#ifdef HYU_COMMON_STAT
+#include "storage/cstatistic.h"
+#endif
 
 #include "storage/vchain.h"
 #include "storage/vchain_hash.h"
@@ -116,6 +119,9 @@ VChainLookupLocator(Oid rel_node,
 		return false;
 	}
 
+#ifdef HYU_COMMON_STAT
+    cnt_version_chain_vdriver = 0;
+#endif
 	/*
 	 * Now we have the hash entry (dummy node) that indicates the
 	 * head/tail of the version chain.
@@ -124,6 +130,9 @@ VChainLookupLocator(Oid rel_node,
 	locator = (VLocator *)dsa_get_address(dsa_vcluster, chain->dsap_prev);
 	while (locator->dsap != chain->dsap)
 	{
+#ifdef HYU_COMMON_STAT
+        __sync_fetch_and_add(&cnt_version_chain_vdriver, 1);
+#endif
 		if (!XidInMVCCSnapshot(locator->xmin, snapshot))
 		{
 			/* Found the visible version */

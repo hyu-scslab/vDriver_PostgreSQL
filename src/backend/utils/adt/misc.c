@@ -44,6 +44,12 @@
 #include "storage/vstatistic.h"
 #include "storage/vcache.h"
 #endif
+#ifdef HYU_COMMON_STAT
+#include "storage/cstatistic.h"
+#include <time.h>
+#include <stdint.h>
+#include <inttypes.h>
+#endif
 
 
 /*
@@ -303,6 +309,46 @@ llt_get_cuttime(PG_FUNCTION_ARGS)
     PG_RETURN_NULL();
 }
 
+Datum
+get_stat(PG_FUNCTION_ARGS)
+{
+#ifdef HYU_COMMON_STAT
+    char string[4000];
+	FullTransactionId full_xid;
+	TransactionId xid;
+    struct timespec tms;
+    int64_t micros;
+
+    /* The C11 way */
+    timespec_get(&tms, TIME_UTC);
+
+    /* POSIX.1-2008 way */
+    //if (clock_gettime(CLOCK_REALTIME,&tms)) {
+    /* seconds, multiplied with 1 million */
+    micros = tms.tv_sec * 1000000;
+    /* Add full microseconds */
+    micros += tms.tv_nsec/1000;
+
+	full_xid = ShmemVariableCache->nextFullXid;
+	xid = XidFromFullTransactionId(full_xid);
+
+    sprintf(string,
+            "_time_                       : %lu.%lu\n"
+            "_recent xid_                 : %8u\n"
+            "_vanilla version chain counter_      : %8lu\n"
+            "_vdriver version chain counter_      : %8lu\n",
+            micros/1000000, micros%1000000,
+            xid,
+            cnt_version_chain_vanilla,
+            cnt_version_chain_vdriver
+           );
+    cnt_version_chain_vanilla = 0;
+    cnt_version_chain_vdriver = 0;
+    PG_RETURN_TEXT_P(cstring_to_text(string));
+#endif
+
+    PG_RETURN_NULL();
+}
 
 /* HYU_LLT end */
 

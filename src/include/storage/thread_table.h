@@ -21,10 +21,10 @@
 
 /* Size of thread table : Max number of simultaneous running processes */
 /* This value is from procArray->maxProcs(122) */
-#define THREAD_TABLE_SIZE	(150)
+#define THREAD_TABLE_SIZE	(1300)
 
 /* Max number of snaped-active trx ids */
-#define SNAPSHOT_SIZE		(150)
+#define SNAPSHOT_SIZE		(1300)
 
 
 #define TS_NONE				(0)

@@ -50,7 +50,8 @@ typedef struct {
 #define VCLUSTER_SEG_NUM_ENTRY	((VCLUSTER_SEGSIZE) / (VCLUSTER_TUPLE_SIZE))
 
 /* Max number of segments we can manage. */
-#define VCLUSTER_MAX_SEGMENTS		10000
+//#define VCLUSTER_MAX_SEGMENTS		10000
+#define VCLUSTER_MAX_SEGMENTS		100000
 
 typedef uint32_t VSegmentId;
 typedef uint32_t VSegmentOffset;
