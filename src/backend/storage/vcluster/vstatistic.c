@@ -246,7 +246,7 @@ MonitorProcessMain(void)
 	InitProcess();
 
 	for (;;) {
-		PrintStatistics();
+		//PrintStatistics();
 		sleep(1);
 	}
 }
