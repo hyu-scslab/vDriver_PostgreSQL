@@ -3401,6 +3401,17 @@ heap_update_with_vc(Relation relation, ItemPointer otid, HeapTuple newtup,
 				infomask2_new_tuple;
 	
 	/* variables for oviraptor */
+    /*
+     *                         newtup
+     *                           |
+     *                           V
+     *  ----------------- ---------------
+     * | oldtup(heaptup) | second_oldtup | (oviraptor)
+     *  ----------------- ---------------
+     *                           |
+     *                           V
+     *                        vDriver
+     */
 	TransactionId	xmin;
 	TransactionId	xmax;
 	Datum			primary_key;
@@ -3412,6 +3423,7 @@ heap_update_with_vc(Relation relation, ItemPointer otid, HeapTuple newtup,
 	OffsetNumber	offnum_second_old;
 	bool			second_is_left;
 	bool			is_second_old_exist;
+    bool            is_repeated_update;
 
 	Assert(ItemPointerIsValid(otid));
 
@@ -3885,6 +3897,16 @@ l2:
 	newtup->t_data->t_infomask2 |= infomask2_new_tuple;
 	HeapTupleHeaderSetXmax(newtup->t_data, xmax_new_tuple);
 
+    /* 
+     * If xmin of the old tuple is same with current transaction id,
+     * it is repeated operation on a same record in a transaction.
+     */
+    if (HeapTupleHeaderGetXmin(oldtup.t_data) == xid) {
+        is_repeated_update = true;
+    } else {
+        is_repeated_update = false;
+    }
+
 	/*
 	 * Replace cid with a combo cid if necessary.  Note that we already put
 	 * the plain cid into the new tuple.
@@ -3987,7 +4009,7 @@ l2:
 	}
 	is_second_old_exist = LP_OVR_IS_USING(lp_second_old);
 
-	if (is_second_old_exist)
+	if (is_second_old_exist && !is_repeated_update)
 	{
 		second_oldtup.t_tableOid = RelationGetRelid(relation);
 		second_oldtup.t_data = (HeapTupleHeader) PageGetItem(page, lp_second_old);
@@ -4021,7 +4043,7 @@ l2:
 	 * Actually, the caller of this function already checked the number of
 	 * primary key, but we just double-check it here.
 	 */
-	if (bms_num_members(bms_pk) == 1 && is_second_old_exist)
+	if (bms_num_members(bms_pk) == 1 && is_second_old_exist && !is_repeated_update)
 	{
 		/*
 		 * Need to add FirstLowInvalidHeapAttributeNumber to get the exact
@@ -4061,15 +4083,40 @@ l2:
 	 */
 
 	/* In-place update on the heap page */
-	RelationPutHeapTupleInPlace(
-			relation, newbuf, offnum_second_old, heaptup, false);
+    if (is_repeated_update == true) {
+        /*
+         * If the record have been updated in current transaction,
+         * just copy new tuple on first old tuple in place.
+         */
+        RelationPutHeapTupleInPlace(
+                relation, newbuf,
+                ItemPointerGetOffsetNumber(otid),
+                heaptup, false);
+    } else {
+        RelationPutHeapTupleInPlace(
+                relation, newbuf, offnum_second_old, heaptup, false);
 
-	/* Set the oviraptor flag of the line pointer */
-	if (second_is_left)
-		LP_OVR_SET_LEFT(lp_second_old);
-	else
-		LP_OVR_SET_RIGHT(lp_second_old);
-	LP_OVR_SET_USING(lp_second_old);
+        /* Set the oviraptor flag of the line pointer */
+        if (second_is_left)
+            LP_OVR_SET_LEFT(lp_second_old);
+        else
+            LP_OVR_SET_RIGHT(lp_second_old);
+        LP_OVR_SET_USING(lp_second_old);
+
+        /* Clear obsolete visibility flags, possibly set by ourselves above... */
+        oldtup.t_data->t_infomask &= ~(HEAP_XMAX_BITS | HEAP_MOVED);
+        oldtup.t_data->t_infomask2 &= ~HEAP_KEYS_UPDATED;
+        /* ... and store info about transaction updating this tuple */
+        Assert(TransactionIdIsValid(xmax_old_tuple));
+        HeapTupleHeaderSetXmax(oldtup.t_data, xmax_old_tuple);
+        oldtup.t_data->t_infomask |= infomask_old_tuple;
+        oldtup.t_data->t_infomask2 |= infomask2_old_tuple;
+        HeapTupleHeaderSetCmax(oldtup.t_data, cid, iscombo);
+
+        /* record address of new tuple in t_ctid of old one */
+        oldtup.t_data->t_ctid = heaptup->t_self;
+    }
+
 
 	{
 		int xmin;
@@ -4085,19 +4132,6 @@ l2:
 			}
 		}
 	}
-
-	/* Clear obsolete visibility flags, possibly set by ourselves above... */
-	oldtup.t_data->t_infomask &= ~(HEAP_XMAX_BITS | HEAP_MOVED);
-	oldtup.t_data->t_infomask2 &= ~HEAP_KEYS_UPDATED;
-	/* ... and store info about transaction updating this tuple */
-	Assert(TransactionIdIsValid(xmax_old_tuple));
-	HeapTupleHeaderSetXmax(oldtup.t_data, xmax_old_tuple);
-	oldtup.t_data->t_infomask |= infomask_old_tuple;
-	oldtup.t_data->t_infomask2 |= infomask2_old_tuple;
-	HeapTupleHeaderSetCmax(oldtup.t_data, cid, iscombo);
-
-	/* record address of new tuple in t_ctid of old one */
-	oldtup.t_data->t_ctid = heaptup->t_self;
 
 	/* clear PD_ALL_VISIBLE flags, reset all visibilitymap bits */
 	if (PageIsAllVisible(BufferGetPage(buffer)))
