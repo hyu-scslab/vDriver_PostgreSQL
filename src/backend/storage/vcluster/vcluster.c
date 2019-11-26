@@ -652,7 +652,7 @@ AllocNewSegmentInternal(dsa_area *dsa, VCLUSTER_TYPE cluster_type)
 	ret = dsa_allocate_extended(
 			dsa, sizeof(VSegmentDesc), DSA_ALLOC_ZERO);
 	
-	ereport(LOG, (errmsg("$$ sizeof(VSegmentDesc): %d", sizeof(VSegmentDesc))));
+	//ereport(LOG, (errmsg("$$ sizeof(VSegmentDesc): %d", sizeof(VSegmentDesc))));
 
 	/* Get a new segment id */
 	new_seg_id = vclusters->reserved_seg_id[cluster_type];
@@ -681,8 +681,8 @@ AllocNewSegmentInternal(dsa_area *dsa, VCLUSTER_TYPE cluster_type)
 	/* Allocate a new segment file */
 	VCacheCreateSegmentFile(new_seg_id);
 
-	ereport(LOG, (errmsg("@@ AllocNewSegmentInternal, seg: %d, type: %d",
-				new_seg_id, cluster_type)));
+	//ereport(LOG, (errmsg("@@ AllocNewSegmentInternal, seg: %d, type: %d",
+	//			new_seg_id, cluster_type)));
 
 
 	/* Returns dsa_pointer for the new VSegmentDesc */
@@ -789,8 +789,8 @@ start_from_head:
 
 		VStatisticUpdateCuttime(cluster_type, cuttime_us);
 
-		ereport(LOG, (errmsg("@@ CutVSegDesc, seg: %d, type: %d, xmin: %d, xmax: %d",
-				victim->seg_id, cluster_type, victim->xmin, victim->xmax)));
+		//ereport(LOG, (errmsg("@@ CutVSegDesc, seg: %d, type: %d, xmin: %d, xmax: %d",
+		//		victim->seg_id, cluster_type, victim->xmin, victim->xmax)));
 #endif
 
 		/* We can cut this segment. */
