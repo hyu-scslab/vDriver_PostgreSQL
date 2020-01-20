@@ -134,21 +134,8 @@ heapam_index_fetch_tuple(struct IndexFetchTableData *scan,
 	BufferHeapTupleTableSlot *bslot = (BufferHeapTupleTableSlot *) slot;
 	bool		got_heap_tuple;
 #ifdef HYU_LLT
-	Relation	relation;
-	Bitmapset	*bms_pk;
-	bool		rel_with_single_pk = false;
+    bool        oviraptor;
 	int			ret_cache_id;
-
-	relation = scan->rel;
-	if (relation != NULL && relation->rd_indexattr != NULL)
-	{
-		bms_pk = RelationGetIndexAttrBitmap(
-				relation, INDEX_ATTR_BITMAP_PRIMARY_KEY);
-
-		if (bms_num_members(bms_pk) == 1)
-			rel_with_single_pk = true;
-	}
-
 #endif
 
 	Assert(TTS_IS_BUFFERTUPLE(slot));
@@ -188,7 +175,9 @@ heapam_index_fetch_tuple(struct IndexFetchTableData *scan,
 #ifdef HYU_LLT
 	hscan->xs_vcache = InvalidVCache;
 	ret_cache_id = InvalidVCache;
-	if (rel_with_single_pk)
+
+    oviraptor = IsOviraptor(scan->rel);
+	if (oviraptor)
 	{
 		got_heap_tuple =
 				heap_hot_search_buffer_with_vc(tid,
@@ -377,12 +366,26 @@ heapam_tuple_delete(Relation relation, ItemPointer tid, CommandId cid,
 					Snapshot snapshot, Snapshot crosscheck, bool wait,
 					TM_FailureData *tmfd, bool changingPart)
 {
+#ifdef HYU_LLT
+    bool        oviraptor;
+
+    oviraptor = IsOviraptor(relation);
+
+    if (oviraptor)
+        /* heap deletion for vDriver. */
+        return heap_delete_with_vc(relation, tid, cid, snapshot,
+                            crosscheck, wait, tmfd, changingPart);
+    else
+        /* Original routine. */
+        return heap_delete(relation, tid, cid, crosscheck, wait, tmfd, changingPart);
+#else
 	/*
 	 * Currently Deleting of index tuples are handled at vacuum, in case if
 	 * the storage itself is cleaning the dead tuples by itself, it is the
 	 * time to call the index tuple deletion also.
 	 */
 	return heap_delete(relation, tid, cid, crosscheck, wait, tmfd, changingPart);
+#endif
 }
 
 
@@ -396,8 +399,7 @@ heapam_tuple_update(Relation relation, ItemPointer otid, TupleTableSlot *slot,
 	HeapTuple	tuple = ExecFetchSlotHeapTuple(slot, true, &shouldFree);
 	TM_Result	result;
 #ifdef HYU_LLT
-	Bitmapset  *bms_pk;
-	bool		rel_with_single_pk = false;
+    bool        oviraptor;
 #endif
 
 	/* Update the tuple with table oid */
@@ -405,16 +407,9 @@ heapam_tuple_update(Relation relation, ItemPointer otid, TupleTableSlot *slot,
 	tuple->t_tableOid = slot->tts_tableOid;
 
 #ifdef HYU_LLT
-	if (relation != NULL && relation->rd_indexattr != NULL)
-	{
-		bms_pk = RelationGetIndexAttrBitmap(
-				relation, INDEX_ATTR_BITMAP_PRIMARY_KEY);
+    oviraptor = IsOviraptor(relation);
 
-		if (bms_num_members(bms_pk) == 1)
-			rel_with_single_pk = true;
-	}
-
-	if (rel_with_single_pk)
+	if (oviraptor)
 		result = heap_update_with_vc(relation, otid, tuple, cid, snapshot,
 									 crosscheck, wait, tmfd, lockmode);
 	else
@@ -435,7 +430,7 @@ heapam_tuple_update(Relation relation, ItemPointer otid, TupleTableSlot *slot,
 	 * If it's a HOT update, we mustn't insert new index entries.
 	 */
 #ifdef HYU_LLT
-	 if (rel_with_single_pk)
+	 if (oviraptor)
 		*update_indexes = false;
 	else
 		*update_indexes = result == TM_Ok && !HeapTupleIsHeapOnly(tuple);
