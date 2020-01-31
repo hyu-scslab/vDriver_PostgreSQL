@@ -1546,7 +1546,7 @@ heap_hot_search_buffer_with_vc(ItemPointer tid, Relation relation,
 							   Buffer buffer, Snapshot snapshot,
 							   HeapTuple heapTuple,
 							   HeapTuple *copied_tuple, bool *all_dead,
-							   bool first_call, int *ret_cache_id)
+							   bool first_call)
 {
 	Page			dp = (Page) BufferGetPage(buffer);
 	BlockNumber 	blkno;
@@ -1779,24 +1779,19 @@ heap_hot_search_buffer_with_vc(ItemPointer tid, Relation relation,
 
 	if (VCacheIsValid(cache_id))
 	{
-		if (ret_cache_id == NULL)
-		{
-			/*
-			 * TODO: Need to check if all of the callers could unpin itself.
-			 * (heapam_scan_bitmap_next_block calls this function as well.)
-			 * This should be just a temporal code.
-			 */
-			VCacheUnref(cache_id);
-		}
-		else
-		{
-			/* TODO: Need to check which OID is proper for this */
-			heapTuple->t_tableOid = OID_MAX;
-			/* TODO: Need to check which item pointer is proper for this */
-			ItemPointerSetInvalid(&heapTuple->t_self);
+		/* TODO: Need to check which OID is proper for this */
+		heapTuple->t_tableOid = OID_MAX;
+		/* TODO: Need to check which item pointer is proper for this */
+		ItemPointerSetInvalid(&heapTuple->t_self);
 
-			*ret_cache_id = cache_id;
-		}
+		/* Copy tuple data before unpinning the vcache page */
+		if (*copied_tuple != NULL)
+			heap_freetuple(*copied_tuple);
+		
+		*copied_tuple = heap_copytuple(heapTuple);
+
+		/* Caller of VClusterLookupTuple must unref the returned cache id */
+		VCacheUnref(cache_id);
 		
 		*all_dead = false;
 

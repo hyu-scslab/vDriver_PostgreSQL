@@ -87,9 +87,6 @@ heapam_index_fetch_begin(Relation rel)
 
 	hscan->xs_base.rel = rel;
 	hscan->xs_cbuf = InvalidBuffer;
-#ifdef HYU_LLT
-	hscan->xs_vcache = InvalidVCache;
-#endif
 
 	return &hscan->xs_base;
 }
@@ -104,13 +101,6 @@ heapam_index_fetch_reset(IndexFetchTableData *scan)
 		ReleaseBuffer(hscan->xs_cbuf);
 		hscan->xs_cbuf = InvalidBuffer;
 	}
-#ifdef HYU_LLT
-	if (VCacheIsValid(hscan->xs_vcache))
-	{
-		VCacheUnref(hscan->xs_vcache);
-		hscan->xs_vcache = InvalidVCache;
-	}
-#endif
 }
 
 static void
@@ -137,7 +127,6 @@ heapam_index_fetch_tuple(struct IndexFetchTableData *scan,
 	Relation	relation;
 	Bitmapset	*bms_pk;
 	bool		rel_with_single_pk = false;
-	int			ret_cache_id;
 
 	relation = scan->rel;
 	if (relation != NULL && relation->rd_indexattr != NULL)
@@ -148,7 +137,6 @@ heapam_index_fetch_tuple(struct IndexFetchTableData *scan,
 		if (bms_num_members(bms_pk) == 1)
 			rel_with_single_pk = true;
 	}
-
 #endif
 
 	Assert(TTS_IS_BUFFERTUPLE(slot));
@@ -165,14 +153,6 @@ heapam_index_fetch_tuple(struct IndexFetchTableData *scan,
 		hscan->xs_cbuf = ReleaseAndReadBuffer(hscan->xs_cbuf,
 											  hscan->xs_base.rel,
 											  ItemPointerGetBlockNumber(tid));
-#ifdef HYU_LLT
-		if (VCacheIsValid(hscan->xs_vcache))
-		{
-			VCacheUnref(hscan->xs_vcache);
-			hscan->xs_vcache = InvalidVCache;
-		}
-
-#endif
 		/*
 		 * Prune page, but only if we weren't already on this page
 		 */
@@ -186,8 +166,6 @@ heapam_index_fetch_tuple(struct IndexFetchTableData *scan,
 	/* Obtain share-lock on the buffer so we can examine visibility */
 	LockBuffer(hscan->xs_cbuf, BUFFER_LOCK_SHARE);
 #ifdef HYU_LLT
-	hscan->xs_vcache = InvalidVCache;
-	ret_cache_id = InvalidVCache;
 	if (rel_with_single_pk)
 	{
 		got_heap_tuple =
@@ -198,8 +176,7 @@ heapam_index_fetch_tuple(struct IndexFetchTableData *scan,
 											   &bslot->base.tupdata,
 											   &bslot->base.copied_tuple,
 											   all_dead,
-											   !*call_again,
-											   &ret_cache_id);
+											   !*call_again);
 	}
 	else
 	{
@@ -212,7 +189,6 @@ heapam_index_fetch_tuple(struct IndexFetchTableData *scan,
 												!*call_again);
 	}
 	bslot->base.tupdata.t_self = *tid;
-	hscan->xs_vcache = ret_cache_id;
 #else
 	got_heap_tuple = heap_hot_search_buffer(tid,
 											hscan->xs_base.rel,

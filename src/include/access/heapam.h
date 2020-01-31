@@ -80,9 +80,6 @@ typedef struct IndexFetchHeapData
 
 	Buffer		xs_cbuf;		/* current heap buffer in scan, if any */
 	/* NB: if xs_cbuf is not InvalidBuffer, we hold a pin on that buffer */
-#ifdef HYU_LLT
-	int			xs_vcache;		/* current vcache in scan, if any */
-#endif
 } IndexFetchHeapData;
 
 /* Result codes for HeapTupleSatisfiesVacuum */
@@ -137,7 +134,7 @@ extern bool heap_hot_search_buffer_with_vc(ItemPointer tid, Relation relation,
 										   HeapTuple heapTuple,
 										   HeapTuple *copied_tuple,
 										   bool *all_dead,
-										   bool first_call, int *ret_cache_id);
+										   bool first_call);
 #endif
 extern bool heap_hot_search_buffer(ItemPointer tid, Relation relation,
 								   Buffer buffer, Snapshot snapshot, HeapTuple heapTuple,
