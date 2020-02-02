@@ -375,6 +375,27 @@ heapgetpage(TableScanDesc sscan, BlockNumber page)
 	OffsetNumber lineoff;
 	ItemId		lpp;
 	bool		all_visible;
+#ifdef HYU_LLT
+	Relation	relation;
+	Bitmapset	*bms_pk;
+	bool		rel_with_single_pk = false;
+	Datum		primary_key;
+	int			attnum_pk;
+	bool		is_null;
+	int			cache_id;
+
+	relation = sscan->rs_rd;
+	
+	if (relation != NULL && relation->rd_indexattr != NULL)
+	{
+		bms_pk = RelationGetIndexAttrBitmap(
+				relation, INDEX_ATTR_BITMAP_PRIMARY_KEY);
+
+		if (bms_num_members(bms_pk) == 1) {
+			rel_with_single_pk = true;
+		}
+	}
+#endif
 
 	Assert(page < scan->rs_nblocks);
 
@@ -449,6 +470,190 @@ heapgetpage(TableScanDesc sscan, BlockNumber page)
 		 lineoff <= lines;
 		 lineoff++, lpp++)
 	{
+#ifdef HYU_LLT
+		if (rel_with_single_pk)
+		{
+			HeapTupleData loctup;
+			bool valid;
+
+			if (!ItemIdIsNormal(lpp))
+			{
+				/* Skip right-side tuple */
+				lineoff++; lpp++;
+				continue;
+			}
+
+			/* Only initial right-side tuple is unused. */
+			if (LP_OVR_IS_UNUSED(lpp))
+			{
+				/* Skip right-side tuple */
+				lineoff++; lpp++;
+				continue;
+			}
+
+			/* Currently, two versions of oviraptor are adjecent each other. */
+			if (LP_OVR_IS_RIGHT(lpp))
+			{
+				elog(ERROR, "we must see left version by jumping 2 tuples");
+				continue;
+			}
+		
+			/* Check left-side tuple first */
+			loctup.t_tableOid = RelationGetRelid(scan->rs_base.rs_rd);
+			loctup.t_data = (HeapTupleHeader) PageGetItem((Page) dp, lpp);
+			loctup.t_len = ItemIdGetLength(lpp);
+			ItemPointerSet(&(loctup.t_self), page, lineoff);
+
+			/* Oviraptor pages cannot be all_visible, so check visibility */
+			valid = HeapTupleSatisfiesVisibility(&loctup, snapshot, buffer);
+
+			CheckForSerializableConflictOut(valid, scan->rs_base.rs_rd,
+											&loctup, buffer, snapshot);
+
+			if (valid)
+			{
+				/* Copy visible left-side tuple */
+				if (scan->rs_vistuples_copied[ntup] != NULL)
+					heap_freetuple(scan->rs_vistuples_copied[ntup]);
+
+				scan->rs_vistuples_copied[ntup] = heap_copytuple(&loctup);
+
+				scan->rs_vistuples[ntup] = lineoff;
+				ntup++;
+				
+				/* Skip right-side tuple */
+				lineoff++; lpp++;
+
+				continue;
+			}
+
+			/* Left-side tuple is invisible, let's check the right-side. */
+			lineoff++; lpp++;
+
+			if (!ItemIdIsNormal(lpp))
+				continue;
+			
+			/* Only initial right-side tuple is unused. */
+			if (LP_OVR_IS_UNUSED(lpp))
+				continue;
+
+			if (LP_OVR_IS_LEFT(lpp))
+			{
+				elog(ERROR, "we must see right version by jumping 2 tuples");
+				continue;
+			}
+
+			/* Check right-side tuple */
+			loctup.t_tableOid = RelationGetRelid(scan->rs_base.rs_rd);
+			loctup.t_data = (HeapTupleHeader) PageGetItem((Page) dp, lpp);
+			loctup.t_len = ItemIdGetLength(lpp);
+			ItemPointerSet(&(loctup.t_self), page, lineoff);
+
+			/* Oviraptor pages cannot be all_visible, so check visibility */
+			valid = HeapTupleSatisfiesVisibility(&loctup, snapshot, buffer);
+
+			CheckForSerializableConflictOut(valid, scan->rs_base.rs_rd,
+											&loctup, buffer, snapshot);
+
+			if (valid)
+			{
+				/* Copy visible right-side tuple */
+				if (scan->rs_vistuples_copied[ntup] != NULL)
+					heap_freetuple(scan->rs_vistuples_copied[ntup]);
+
+				scan->rs_vistuples_copied[ntup] = heap_copytuple(&loctup);
+
+				scan->rs_vistuples[ntup] = lineoff;
+				ntup++;
+
+				continue;
+			}
+
+			/*
+			 * Both left and right-side tuple are invisible so that
+			 * we need to search vDriver inside.
+			 */
+			if (curr_cmdtype == CMD_UPDATE)
+			{
+				if (scan->rs_vistuples_copied[ntup] != NULL)
+					heap_freetuple(scan->rs_vistuples_copied[ntup]);
+
+				/*
+				 * We cannot find visible tuple inside the heap page.
+				 * Copy one of any tuple in the heap page so that
+				 * following ExecStoreBufferHeapTuple can be passed.
+				 */
+				scan->rs_vistuples_copied[ntup] = heap_copytuple(&loctup);
+				
+				continue;
+			}
+			scan->rs_vistuples_copied[ntup] = NULL;
+
+			/*
+			 * Need to add FirstLowInvalidHeapAttributeNumber to get the
+			 * exact attribute number of the primary key.
+			 * See the comment above RelationGetIndexAttrBitmap function.
+			 */
+			attnum_pk = bms_singleton_member(bms_pk) +
+					FirstLowInvalidHeapAttributeNumber;
+
+			/* Retrive the primary key from the old tuple */
+			primary_key = heap_getattr(
+					&loctup, attnum_pk, relation->rd_att, &is_null);
+		
+			/* Find the old version from the vcluster */
+			cache_id = VClusterLookupTuple(relation->rd_node.relNode,
+										   primary_key,
+										   snapshot,
+										   (void**) &(loctup.t_data));
+
+			if (VCacheIsValid(cache_id))
+			{
+				loctup.t_tableOid = OID_MAX;
+				ItemPointerSetInvalid(&(loctup.t_self));
+
+				if (scan->rs_vistuples_copied[ntup] != NULL)
+					heap_freetuple(scan->rs_vistuples_copied[ntup]);
+
+				/* Copy tuple data before unpinning the vcache page */
+				scan->rs_vistuples_copied[ntup] =
+						heap_copytuple(&loctup);
+
+				/* 
+				 * Caller of VClusterLookupTuple must unref
+				 * the returned cache id
+				 */
+				VCacheUnref(cache_id);
+
+				ntup++;
+			}	
+		}
+		else
+		{
+			if (ItemIdIsNormal(lpp))
+			{
+				HeapTupleData loctup;
+				bool		valid;
+
+				loctup.t_tableOid = RelationGetRelid(scan->rs_base.rs_rd);
+				loctup.t_data = (HeapTupleHeader) PageGetItem((Page) dp, lpp);
+				loctup.t_len = ItemIdGetLength(lpp);
+				ItemPointerSet(&(loctup.t_self), page, lineoff);
+
+				if (all_visible)
+					valid = true;
+				else
+					valid = HeapTupleSatisfiesVisibility(
+							&loctup, snapshot, buffer);
+
+				CheckForSerializableConflictOut(valid, scan->rs_base.rs_rd,
+												&loctup, buffer, snapshot);
+
+				if (valid)
+					scan->rs_vistuples[ntup++] = lineoff;
+			}
+		}
+#else
 		if (ItemIdIsNormal(lpp))
 		{
 			HeapTupleData loctup;
@@ -470,6 +675,7 @@ heapgetpage(TableScanDesc sscan, BlockNumber page)
 			if (valid)
 				scan->rs_vistuples[ntup++] = lineoff;
 		}
+#endif
 	}
 
 	LockBuffer(buffer, BUFFER_LOCK_UNLOCK);
@@ -1373,6 +1579,31 @@ heap_getnextslot(TableScanDesc sscan, ScanDirection direction, TupleTableSlot *s
 {
 	HeapScanDesc scan = (HeapScanDesc) sscan;
 
+#ifdef HYU_LLT
+	Relation	relation;
+	Bitmapset	*bms_pk;
+	bool		rel_with_single_pk = false;
+
+	relation = sscan->rs_rd;
+	
+	if (relation != NULL &&
+		relation->rd_indexvalid && relation->rd_indexattr == NULL)
+	{
+		RelationGetIndexAttrBitmap(
+				relation, INDEX_ATTR_BITMAP_PRIMARY_KEY);
+	}
+
+	if (relation != NULL && relation->rd_indexattr != NULL)
+	{
+		bms_pk = RelationGetIndexAttrBitmap(
+				relation, INDEX_ATTR_BITMAP_PRIMARY_KEY);
+
+		if (bms_num_members(bms_pk) == 1) {
+			rel_with_single_pk = true;
+		}
+	}
+#endif
+
 	/* Note: no locking manipulations needed */
 
 	HEAPAMSLOTDEBUG_1;			/* heap_getnextslot( info ) */
@@ -1396,9 +1627,18 @@ heap_getnextslot(TableScanDesc sscan, ScanDirection direction, TupleTableSlot *s
 	HEAPAMSLOTDEBUG_3;			/* heap_getnextslot returning tuple */
 
 	pgstat_count_heap_getnext(scan->rs_base.rs_rd);
-
+#ifdef HYU_LLT
+	if (rel_with_single_pk)
+		ExecStoreBufferHeapTuple(scan->rs_vistuples_copied[scan->rs_cindex],
+								 slot,
+							 	 scan->rs_cbuf);
+	else
+		ExecStoreBufferHeapTuple(&scan->rs_ctup, slot,
+							 	 scan->rs_cbuf);
+#else
 	ExecStoreBufferHeapTuple(&scan->rs_ctup, slot,
 							 scan->rs_cbuf);
+#endif
 	return true;
 }
 
