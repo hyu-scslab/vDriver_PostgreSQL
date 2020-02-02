@@ -258,13 +258,16 @@ typedef struct HeapTupleTableSlot
 	 * finding a visible version in a heap page releases the page latch
 	 * right after it finds the tuple.
 	 * For the implementation of the oviraptor, we do in-place update on
-	 * a heap tuple, and it incurs another race problem. Reading transaction
+	 * a heap tuple, and it incurs another race problem. A reader transaction
 	 * only stores the pointer of the visible heap tuple and then releases
 	 * the page latch. Before retrieving the actual contents of the tuple,
 	 * another transaction can overwrite the tuple with a new one, so the
 	 * reader could see a different tuple from it actually found.
 	 * So we need to memcpy (heap_copytup) the visible heap tuple into the
 	 * copied_tuple here before releasing the page latch.
+	 *
+	 * This is for point lookup, and same approach is applied to range query.
+	 * copied_tuple is initialized as NULL in the MakeTupleTableSlot.
 	 */
 	HeapTuple	copied_tuple;
 #endif

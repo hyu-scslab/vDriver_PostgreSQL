@@ -2161,16 +2161,27 @@ heapam_scan_bitmap_next_block(TableScanDesc scan,
 #ifdef HYU_LLT
 	Relation	relation;
 	Bitmapset	*bms_pk;
-	//bool		rel_with_single_pk = false;
+	bool		rel_with_single_pk = false;
 
 	relation = scan->rs_rd;
+
+	if (relation != NULL && relation->rd_indexattr == NULL)
+	{
+		/*
+		 * To get the primary key information from the relation at the lookup
+		 * path, it must be cached.
+	 	 */
+		RelationGetIndexAttrBitmap(relation,
+								   INDEX_ATTR_BITMAP_PRIMARY_KEY);
+	}
+
 	if (relation != NULL && relation->rd_indexattr != NULL)
 	{
 		bms_pk = RelationGetIndexAttrBitmap(
 				relation, INDEX_ATTR_BITMAP_PRIMARY_KEY);
 
 		if (bms_num_members(bms_pk) == 1) {
-			//rel_with_single_pk = true;
+			rel_with_single_pk = true;
 		}
 	}
 #endif
@@ -2234,15 +2245,26 @@ heapam_scan_bitmap_next_block(TableScanDesc scan,
 
 			ItemPointerSet(&tid, page, offnum);
 #ifdef HYU_LLT
-			/* TODO: need to check if we have to change this */
-			if (heap_hot_search_buffer(&tid, scan->rs_rd, buffer, snapshot,
-									   &heapTuple, NULL, true))
-
+			if (rel_with_single_pk)
+			{
+				if (heap_hot_search_buffer_with_vc(
+						&tid, scan->rs_rd, buffer, snapshot, &heapTuple,
+						&hscan->rs_vistuples_copied[ntup], NULL, true))
+					hscan->rs_vistuples[ntup++] =
+							ItemPointerGetOffsetNumber(&tid);
+			}
+			else
+			{
+				if (heap_hot_search_buffer(&tid, scan->rs_rd, buffer,
+										   snapshot, &heapTuple, NULL, true))
+					hscan->rs_vistuples[ntup++] =
+							ItemPointerGetOffsetNumber(&tid);
+			}
 #else
 			if (heap_hot_search_buffer(&tid, scan->rs_rd, buffer, snapshot,
 									   &heapTuple, NULL, true))
-#endif
 				hscan->rs_vistuples[ntup++] = ItemPointerGetOffsetNumber(&tid);
+#endif
 		}
 	}
 	else
@@ -2255,6 +2277,10 @@ heapam_scan_bitmap_next_block(TableScanDesc scan,
 		OffsetNumber maxoff = PageGetMaxOffsetNumber(dp);
 		OffsetNumber offnum;
 
+		/*
+		 * TODO: jongbin: Need to check pair tuple of oviraptor,
+		 * and in the vDriver if necessary.
+		 */
 		for (offnum = FirstOffsetNumber; offnum <= maxoff; offnum = OffsetNumberNext(offnum))
 		{
 			ItemId		lp;
@@ -2297,6 +2323,23 @@ heapam_scan_bitmap_next_tuple(TableScanDesc scan,
 	Page		dp;
 	ItemId		lp;
 
+#ifdef HYU_LLT
+	Relation	relation;
+	Bitmapset	*bms_pk;
+	bool		rel_with_single_pk = false;
+
+	relation = scan->rs_rd;
+	if (relation != NULL && relation->rd_indexattr != NULL)
+	{
+		bms_pk = RelationGetIndexAttrBitmap(
+				relation, INDEX_ATTR_BITMAP_PRIMARY_KEY);
+
+		if (bms_num_members(bms_pk) == 1) {
+			rel_with_single_pk = true;
+		}
+	}
+#endif
+
 	/*
 	 * Out of range?  If so, nothing more to look at on this page
 	 */
@@ -2315,6 +2358,20 @@ heapam_scan_bitmap_next_tuple(TableScanDesc scan,
 
 	pgstat_count_heap_fetch(scan->rs_rd);
 
+#ifdef HYU_LLT
+	if (rel_with_single_pk)
+		ExecStoreBufferHeapTuple(hscan->rs_vistuples_copied[hscan->rs_cindex],
+								 slot,
+								 hscan->rs_cbuf);
+	else
+		/*
+		 * Set up the result slot to point to this tuple.  Note that the slot
+		 * acquires a pin on the buffer.
+		 */
+		ExecStoreBufferHeapTuple(&hscan->rs_ctup,
+							 slot,
+							 hscan->rs_cbuf);
+#else
 	/*
 	 * Set up the result slot to point to this tuple.  Note that the slot
 	 * acquires a pin on the buffer.
@@ -2322,6 +2379,7 @@ heapam_scan_bitmap_next_tuple(TableScanDesc scan,
 	ExecStoreBufferHeapTuple(&hscan->rs_ctup,
 							 slot,
 							 hscan->rs_cbuf);
+#endif
 
 	hscan->rs_cindex++;
 

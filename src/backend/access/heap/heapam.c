@@ -1168,6 +1168,11 @@ heap_beginscan(Relation relation, Snapshot snapshot,
 	 */
 	scan = (HeapScanDesc) palloc(sizeof(HeapScanDescData));
 
+#ifdef HYU_LLT
+	/* Initialize the array for copying scanned tuples */
+	memset(scan->rs_vistuples_copied, 0, sizeof(scan->rs_vistuples_copied));
+#endif
+
 	scan->rs_base.rs_rd = relation;
 	scan->rs_base.rs_snapshot = snapshot;
 	scan->rs_base.rs_nkeys = nkeys;
@@ -1631,11 +1636,8 @@ heap_hot_search_buffer_with_vc(ItemPointer tid, Relation relation,
 		if (*copied_tuple != NULL)
 			heap_freetuple(*copied_tuple);
 		
-		/* copied_tuple is only necessary for read transaction */
-		if (curr_cmdtype == CMD_SELECT)
-			*copied_tuple = heap_copytuple(heapTuple);
-		else
-			*copied_tuple = NULL;
+		/* Copy visible tuple */
+		*copied_tuple = heap_copytuple(heapTuple);
 
 		if (valid)
 		{
@@ -1703,12 +1705,9 @@ heap_hot_search_buffer_with_vc(ItemPointer tid, Relation relation,
 		 */
 		if (*copied_tuple != NULL)
 			heap_freetuple(*copied_tuple);
-		
-		/* copied_tuple is only necessary for read transaction */
-		if (curr_cmdtype == CMD_SELECT)
-			*copied_tuple = heap_copytuple(heapTuple);
-		else
-			*copied_tuple = NULL;
+	
+		/* Copy visible tuple */
+		*copied_tuple = heap_copytuple(heapTuple);
 
 		if (all_dead)
 			*all_dead = false;
@@ -1724,6 +1723,16 @@ heap_hot_search_buffer_with_vc(ItemPointer tid, Relation relation,
 	 */
 	if (curr_cmdtype == CMD_UPDATE)
 	{
+		if (*copied_tuple != NULL)
+			heap_freetuple(*copied_tuple);
+
+		/*
+		 * We cannot find visible tuple inside the heap page.
+		 * Copy one of any tuple in the heap page so that
+		 * following ExecStoreBufferHeapTuple can be passed.
+		 */
+		*copied_tuple = heap_copytuple(heapTuple);
+
 		return true;
 	}
 	
@@ -1793,7 +1802,8 @@ heap_hot_search_buffer_with_vc(ItemPointer tid, Relation relation,
 		/* Caller of VClusterLookupTuple must unref the returned cache id */
 		VCacheUnref(cache_id);
 		
-		*all_dead = false;
+		if (all_dead)
+				*all_dead = false;
 
 		return true;
 	}
