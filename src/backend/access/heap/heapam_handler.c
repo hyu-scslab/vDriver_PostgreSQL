@@ -211,7 +211,16 @@ heapam_index_fetch_tuple(struct IndexFetchTableData *scan,
 		*call_again = !IsMVCCSnapshot(snapshot);
 
 		slot->tts_tableOid = RelationGetRelid(scan->rel);
+#ifdef HYU_LLT
+		if (rel_with_single_pk)
+			ExecStoreBufferHeapTuple(
+					bslot->base.copied_tuple, slot, hscan->xs_cbuf);
+		else
+			ExecStoreBufferHeapTuple(
+					&bslot->base.tupdata, slot, hscan->xs_cbuf);
+#else
 		ExecStoreBufferHeapTuple(&bslot->base.tupdata, slot, hscan->xs_cbuf);
+#endif
 	}
 	else
 	{
