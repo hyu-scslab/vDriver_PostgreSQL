@@ -2171,6 +2171,10 @@ heapam_scan_bitmap_next_block(TableScanDesc scan,
 	Relation	relation;
 	Bitmapset	*bms_pk;
 	bool		rel_with_single_pk = false;
+	Datum		primary_key;
+	int			attnum_pk;
+	bool		is_null;
+	int			cache_id;
 
 	relation = scan->rs_rd;
 
@@ -2293,6 +2297,135 @@ heapam_scan_bitmap_next_block(TableScanDesc scan,
 			bool		valid;
 
 #ifdef HYU_LLT
+			if (rel_with_single_pk)
+			{
+				lp = PageGetItemId(dp, offnum);
+				if (!ItemIdIsNormal(lp))
+					continue;
+
+				if (LP_OVR_IS_UNUSED(lp))
+					continue;
+
+				loctup.t_data = (HeapTupleHeader) PageGetItem((Page) dp, lp);
+				loctup.t_len = ItemIdGetLength(lp);
+				loctup.t_tableOid = scan->rs_rd->rd_id;
+				ItemPointerSet(&loctup.t_self, page, offnum);
+				valid = HeapTupleSatisfiesVisibility(&loctup, snapshot, buffer);
+
+				CheckForSerializableConflictOut(valid, scan->rs_rd, &loctup,
+												buffer, snapshot);
+
+				if (valid)
+				{
+					/* Copy visible tuple */
+					if (hscan->rs_vistuples_copied[ntup] != NULL)
+						heap_freetuple(hscan->rs_vistuples_copied[ntup]);
+
+					hscan->rs_vistuples_copied[ntup] = heap_copytuple(&loctup);
+					hscan->rs_vistuples[ntup] = offnum;
+					ntup++;
+
+					PredicateLockTuple(scan->rs_rd, &loctup, snapshot);
+
+					if (LP_OVR_IS_LEFT(lp))
+					{
+						/* Skip right-side tuple */
+						offnum++;
+					}
+					continue;
+				}
+				
+				if (LP_OVR_IS_LEFT(lp))
+					/* Left-side tuple is invisible, let's look at right-side. */
+					continue;
+
+				Assert(LP_OVR_IS_RIGHT(lp));
+
+				/*
+				 * Both left and right-side tuple are invisible so that
+				 * we need to search vDriver inside.
+				 */
+				if (curr_cmdtype == CMD_UPDATE)
+				{
+					/*
+					 * If this scanning is for update, we don't need to bother
+					 * searching inside the vDriver.
+					 */
+					if (hscan->rs_vistuples_copied[ntup] != NULL)
+						heap_freetuple(hscan->rs_vistuples_copied[ntup]);
+
+					/*
+					 * We cannot find visible tuple inside the heap page.
+					 * Copy one of any tuple in the heap page so that
+					 * following ExecStoreBufferHeapTuple can be passed.
+					 */
+					hscan->rs_vistuples_copied[ntup] = heap_copytuple(&loctup);
+
+					hscan->rs_vistuples[ntup] = offnum;
+					ntup++;
+					
+					continue;
+				}
+				hscan->rs_vistuples_copied[ntup] = NULL;
+
+				/*
+				 * Need to add FirstLowInvalidHeapAttributeNumber to get the
+				 * exact attribute number of the primary key.
+				 * See the comment above RelationGetIndexAttrBitmap function.
+				 */
+				attnum_pk = bms_singleton_member(bms_pk) +
+						FirstLowInvalidHeapAttributeNumber;
+
+				/* Retrive the primary key from the old tuple */
+				primary_key = heap_getattr(
+						&loctup, attnum_pk, relation->rd_att, &is_null);
+			
+				/* Find the old version from the vcluster */
+				cache_id = VClusterLookupTuple(relation->rd_node.relNode,
+											   primary_key,
+											   snapshot,
+											   (void**) &(loctup.t_data));
+
+				if (VCacheIsValid(cache_id))
+				{
+					loctup.t_tableOid = OID_MAX;
+					ItemPointerSetInvalid(&(loctup.t_self));
+
+					if (hscan->rs_vistuples_copied[ntup] != NULL)
+						heap_freetuple(hscan->rs_vistuples_copied[ntup]);
+
+					/* Copy tuple data before unpinning the vcache page */
+					hscan->rs_vistuples_copied[ntup] =
+							heap_copytuple(&loctup);
+
+					/* 
+					 * Caller of VClusterLookupTuple must unref
+					 * the returned cache id
+					 */
+					VCacheUnref(cache_id);
+					
+					hscan->rs_vistuples[ntup] = offnum;
+					ntup++;
+				}
+			}
+			else
+			{
+				lp = PageGetItemId(dp, offnum);
+				if (!ItemIdIsNormal(lp))
+					continue;
+				loctup.t_data = (HeapTupleHeader) PageGetItem((Page) dp, lp);
+				loctup.t_len = ItemIdGetLength(lp);
+				loctup.t_tableOid = scan->rs_rd->rd_id;
+				ItemPointerSet(&loctup.t_self, page, offnum);
+				valid = HeapTupleSatisfiesVisibility(&loctup, snapshot, buffer);
+				if (valid)
+				{
+					hscan->rs_vistuples[ntup++] = offnum;
+					PredicateLockTuple(scan->rs_rd, &loctup, snapshot);
+				}
+				CheckForSerializableConflictOut(valid, scan->rs_rd, &loctup,
+												buffer, snapshot);
+			}
 #else
 			lp = PageGetItemId(dp, offnum);
 			if (!ItemIdIsNormal(lp))
