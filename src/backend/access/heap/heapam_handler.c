@@ -2286,16 +2286,14 @@ heapam_scan_bitmap_next_block(TableScanDesc scan,
 		OffsetNumber maxoff = PageGetMaxOffsetNumber(dp);
 		OffsetNumber offnum;
 
-		/*
-		 * TODO: jongbin: Need to check pair tuple of oviraptor,
-		 * and in the vDriver if necessary.
-		 */
 		for (offnum = FirstOffsetNumber; offnum <= maxoff; offnum = OffsetNumberNext(offnum))
 		{
 			ItemId		lp;
 			HeapTupleData loctup;
 			bool		valid;
 
+#ifdef HYU_LLT
+#else
 			lp = PageGetItemId(dp, offnum);
 			if (!ItemIdIsNormal(lp))
 				continue;
@@ -2311,6 +2309,7 @@ heapam_scan_bitmap_next_block(TableScanDesc scan,
 			}
 			CheckForSerializableConflictOut(valid, scan->rs_rd, &loctup,
 											buffer, snapshot);
+#endif
 		}
 	}
 

@@ -473,32 +473,15 @@ heapgetpage(TableScanDesc sscan, BlockNumber page)
 #ifdef HYU_LLT
 		if (rel_with_single_pk)
 		{
-			HeapTupleData loctup;
-			bool valid;
+			HeapTupleData	loctup;
+			bool			valid;
 
 			if (!ItemIdIsNormal(lpp))
-			{
-				/* Skip right-side tuple */
-				lineoff++; lpp++;
 				continue;
-			}
-
-			/* Only initial right-side tuple is unused. */
+			
 			if (LP_OVR_IS_UNUSED(lpp))
-			{
-				/* Skip right-side tuple */
-				lineoff++; lpp++;
 				continue;
-			}
 
-			/* Currently, two versions of oviraptor are adjecent each other. */
-			if (LP_OVR_IS_RIGHT(lpp))
-			{
-				elog(ERROR, "we must see left version by jumping 2 tuples");
-				continue;
-			}
-		
-			/* Check left-side tuple first */
 			loctup.t_tableOid = RelationGetRelid(scan->rs_base.rs_rd);
 			loctup.t_data = (HeapTupleHeader) PageGetItem((Page) dp, lpp);
 			loctup.t_len = ItemIdGetLength(lpp);
@@ -512,7 +495,7 @@ heapgetpage(TableScanDesc sscan, BlockNumber page)
 
 			if (valid)
 			{
-				/* Copy visible left-side tuple */
+				/* Copy visible tuple */
 				if (scan->rs_vistuples_copied[ntup] != NULL)
 					heap_freetuple(scan->rs_vistuples_copied[ntup]);
 
@@ -521,53 +504,19 @@ heapgetpage(TableScanDesc sscan, BlockNumber page)
 				scan->rs_vistuples[ntup] = lineoff;
 				ntup++;
 				
-				/* Skip right-side tuple */
-				lineoff++; lpp++;
-
+				if (LP_OVR_IS_LEFT(lpp))
+				{
+					/* Skip right-side tuple */
+					lineoff++; lpp++;
+				}
 				continue;
 			}
-
-			/* Left-side tuple is invisible, let's check the right-side. */
-			lineoff++; lpp++;
-
-			if (!ItemIdIsNormal(lpp))
-				continue;
 			
-			/* Only initial right-side tuple is unused. */
-			if (LP_OVR_IS_UNUSED(lpp))
-				continue;
-
 			if (LP_OVR_IS_LEFT(lpp))
-			{
-				elog(ERROR, "we must see right version by jumping 2 tuples");
+				/* Left-side tuple is invisible, let's look at right-side. */
 				continue;
-			}
 
-			/* Check right-side tuple */
-			loctup.t_tableOid = RelationGetRelid(scan->rs_base.rs_rd);
-			loctup.t_data = (HeapTupleHeader) PageGetItem((Page) dp, lpp);
-			loctup.t_len = ItemIdGetLength(lpp);
-			ItemPointerSet(&(loctup.t_self), page, lineoff);
-
-			/* Oviraptor pages cannot be all_visible, so check visibility */
-			valid = HeapTupleSatisfiesVisibility(&loctup, snapshot, buffer);
-
-			CheckForSerializableConflictOut(valid, scan->rs_base.rs_rd,
-											&loctup, buffer, snapshot);
-
-			if (valid)
-			{
-				/* Copy visible right-side tuple */
-				if (scan->rs_vistuples_copied[ntup] != NULL)
-					heap_freetuple(scan->rs_vistuples_copied[ntup]);
-
-				scan->rs_vistuples_copied[ntup] = heap_copytuple(&loctup);
-
-				scan->rs_vistuples[ntup] = lineoff;
-				ntup++;
-
-				continue;
-			}
+			Assert(LP_OVR_IS_RIGHT(lpp));
 
 			/*
 			 * Both left and right-side tuple are invisible so that
@@ -575,6 +524,10 @@ heapgetpage(TableScanDesc sscan, BlockNumber page)
 			 */
 			if (curr_cmdtype == CMD_UPDATE)
 			{
+				/*
+				 * If this scanning is for update, we don't need to bother
+				 * searching inside the vDriver.
+				 */
 				if (scan->rs_vistuples_copied[ntup] != NULL)
 					heap_freetuple(scan->rs_vistuples_copied[ntup]);
 
@@ -584,6 +537,9 @@ heapgetpage(TableScanDesc sscan, BlockNumber page)
 				 * following ExecStoreBufferHeapTuple can be passed.
 				 */
 				scan->rs_vistuples_copied[ntup] = heap_copytuple(&loctup);
+
+				scan->rs_vistuples[ntup] = lineoff;
+				ntup++;
 				
 				continue;
 			}
@@ -624,9 +580,10 @@ heapgetpage(TableScanDesc sscan, BlockNumber page)
 				 * the returned cache id
 				 */
 				VCacheUnref(cache_id);
-
+				
+				scan->rs_vistuples[ntup] = lineoff;
 				ntup++;
-			}	
+			}
 		}
 		else
 		{
