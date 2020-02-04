@@ -293,7 +293,7 @@ llt_get_cuttime(PG_FUNCTION_ARGS)
 	tmp[0] = '\0';
 	for (int i = 0; i < NUM_CUTTIME_BUCKET; i++)
 	{
-		sprintf(tmp, "%8lu %8lu %8lu %8lu\n",
+		sprintf(tmp, "%8u %8u %8u %8u\n",
 				CUTTIME_BUCKET_UNIT * (i + 1),
 				vstatistic_desc->bucket_cuttime[VCLUSTER_HOT][i],
 				vstatistic_desc->bucket_cuttime[VCLUSTER_COLD][i],

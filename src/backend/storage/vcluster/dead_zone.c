@@ -35,6 +35,8 @@
 
 #include "storage/vcluster.h"
 #include "storage/thread_table.h"
+#include "storage/vchain_hash.h"
+#include "storage/vchain.h"
 #ifdef HYU_LLT_STAT
 #include "storage/vstatistic.h"
 #endif
@@ -290,6 +292,87 @@ SetDeadZone(void)
 	/* Free local data. */
 	FreeSnapshotTable(table);
 	free(local_dead_zone_desc);
+}
+
+/*
+ * VersionChainIsInDeadZone
+ *
+ * Visibility check for all versions in a version chain.
+ * If all versions are all invisible, return true.
+ */
+bool
+VersionChainIsInDeadZone(Oid rel_node,
+                         PrimaryKey primary_key)
+{
+	LWLock			*partition_lock;
+	uint32			hashcode;
+	dsa_pointer		dsap_chain;
+	VLocator		*chain;
+	VLocator		*locator;
+	VChainTag		chain_tag;
+
+	chain_tag.rel_node = rel_node;
+	chain_tag.primary_key = primary_key;
+
+	/* Get hash code for the primary key */
+	hashcode = VChainHashCode(&chain_tag);
+	partition_lock = VChainMappingPartitionLock(hashcode);
+
+	/* Acquire partition lock for the primary key with shared mode */
+	LWLockAcquire(partition_lock, LW_SHARED);
+	if (!VChainHashLookup(&chain_tag, hashcode, &dsap_chain))
+	{
+		/* There is no hash entry for the primary key in the vchain hash */
+		LWLockRelease(partition_lock);
+		return true;
+	}
+	LWLockRelease(partition_lock);
+
+	/* Set epoch */
+	SetTimestamp();
+	pg_memory_barrier();
+
+	chain = (VLocator *)dsa_get_address(dsa_vcluster, dsap_chain);
+	if (chain->dsap_prev == chain->dsap)
+	{
+		/* There is a hash entry, but the version chain is empty */
+
+		/* Clear epoch */
+		pg_memory_barrier();
+		ClearTimestamp();
+
+		return true;
+	}
+
+	/*
+	 * Now we have the hash entry (dummy node) that indicates the
+	 * head/tail of the version chain.
+	 * Try to find any visible version from the recent version (tail)
+	 */
+	locator = (VLocator *)dsa_get_address(dsa_vcluster, chain->dsap_prev);
+	while (locator->dsap != chain->dsap)
+	{
+		if (!RecIsInDeadZone(locator->xmin, locator->xmax))
+		{
+			/* This version is visible for some transactions. */
+
+			/* Clear epoch */
+			pg_memory_barrier();
+			ClearTimestamp();
+
+			return false;
+		}
+		locator = (VLocator *)dsa_get_address(
+				dsa_vcluster, locator->dsap_prev);
+	}
+
+	/* There are no visible version for all live transactions. */
+
+	/* Clear epoch */
+	pg_memory_barrier();
+	ClearTimestamp();
+
+	return true;
 }
 
 /*

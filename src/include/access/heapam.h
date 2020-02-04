@@ -172,6 +172,11 @@ extern void heap_insert(Relation relation, HeapTuple tup, CommandId cid,
 extern void heap_multi_insert(Relation relation, struct TupleTableSlot **slots,
 							  int ntuples, CommandId cid, int options,
 							  BulkInsertState bistate);
+#ifdef HYU_LLT
+extern TM_Result heap_delete_with_vc(Relation relation, ItemPointer tid,
+							 CommandId cid, Snapshot snapshot, Snapshot crosscheck, bool wait,
+							 struct TM_FailureData *tmfd, bool changingPart);
+#endif
 extern TM_Result heap_delete(Relation relation, ItemPointer tid,
 							 CommandId cid, Snapshot crosscheck, bool wait,
 							 struct TM_FailureData *tmfd, bool changingPart);

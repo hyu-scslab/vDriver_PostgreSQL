@@ -17,6 +17,7 @@
 #include "utils/snapmgr.h"
 #include "utils/timestamp.h"
 
+#include "storage/vcluster.h"
 #include "storage/thread_table.h"
 
 #define DEAD_ZONE_SIZE	(SNAPSHOT_SIZE)
@@ -57,6 +58,8 @@ extern bool RecIsInDeadZone(TransactionId xmin,
 						 TransactionId xmax);
 extern bool SegIsInDeadZone(TransactionId xmin,
 						 TransactionId xmax);
+extern bool VersionChainIsInDeadZone(Oid rel_node,
+                         PrimaryKey primary_key);
 
 
 #endif							/* DEAD_ZONE_H */

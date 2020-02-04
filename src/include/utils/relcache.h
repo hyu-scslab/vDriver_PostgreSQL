@@ -61,6 +61,9 @@ typedef enum IndexAttrBitmapKind
 extern Bitmapset *RelationGetIndexAttrBitmap(Relation relation,
 											 IndexAttrBitmapKind attrKind);
 
+#ifdef HYU_LLT
+extern bool IsOviraptor(Relation relation);
+#endif
 extern void RelationGetExclusionInfo(Relation indexRelation,
 									 Oid **operators,
 									 Oid **procs,
